@@ -1,8 +1,10 @@
+import type { Anthropic } from "@anthropic-ai/sdk"
 import { type ModelInfo, type VertexModelId, vertexDefaultModelId, vertexModels } from "@roo-code/types"
 
 import type { ApiHandlerOptions } from "../../shared/api"
 
 import { getModelParams } from "../transform/model-params"
+import { convertAnthropicMessageToGemini } from "../transform/gemini-format"
 
 import { GeminiHandler } from "./gemini"
 import type { SingleCompletionHandler, ApiHandlerCreateMessageMetadata } from "../index"
@@ -38,13 +40,35 @@ export class VertexHandler extends GeminiHandler implements SingleCompletionHand
 	 * No GCP project or OAuth required.
 	 */
 	private async *createMessageExpress(systemInstruction: string, messages: any[]): ApiStream {
-		const { id: model, info, maxTokens } = this.getModel()
+		const { id: model, info, maxTokens, reasoning: thinkingConfig } = this.getModel()
 		const apiKey = this.options.vertexApiKey!
 
-		const googleMessages = messages.map((msg: any) => ({
-			role: msg.role === "assistant" ? "model" : "user",
-			parts: [{ text: typeof msg.content === "string" ? msg.content : JSON.stringify(msg.content) }],
-		}))
+		// Only forward encrypted reasoning continuations (thoughtSignature) when we are
+		// using reasoning (thinkingConfig is present). Both effort-based (thinkingLevel)
+		// and budget-based (thinkingBudget) models require this for active loops.
+		const includeThoughtSignatures = Boolean(thinkingConfig)
+
+		// Filter out "reasoning" meta messages that are not valid Anthropic messages
+		const geminiMessages = messages.filter((message) => {
+			const meta = message as { type?: string }
+			return meta.type !== "reasoning"
+		}) as Anthropic.Messages.MessageParam[]
+
+		// Build a map of tool IDs to names from previous messages
+		const toolIdToName = new Map<string, string>()
+		for (const message of messages) {
+			if (Array.isArray(message.content)) {
+				for (const block of message.content) {
+					if (block.type === "tool_use") {
+						toolIdToName.set(block.id, block.name)
+					}
+				}
+			}
+		}
+
+		const googleMessages = geminiMessages
+			.map((message) => convertAnthropicMessageToGemini(message, { includeThoughtSignatures, toolIdToName }))
+			.flat()
 
 		// Handle specific model suffixes if present (e.g. :thinking)
 		const cleanModelId = model.endsWith(":thinking") ? model.replace(":thinking", "") : model

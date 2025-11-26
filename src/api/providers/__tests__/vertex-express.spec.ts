@@ -52,9 +52,7 @@ describe("VertexHandler Express Mode", () => {
 		)
 
 		const callArgs = JSON.parse(fetchMock.mock.calls[0][1].body)
-		// Default temperature for Gemini is 1
 		expect(callArgs.generationConfig.temperature).toBe(1)
-		// Default maxOutputTokens is 8192
 		expect(callArgs.generationConfig.maxOutputTokens).toBe(8192)
 	})
 
@@ -80,6 +78,46 @@ describe("VertexHandler Express Mode", () => {
 		const callArgs = JSON.parse(fetchMock.mock.calls[0][1].body)
 		expect(callArgs.generationConfig.temperature).toBe(0.5)
 		expect(callArgs.generationConfig.maxOutputTokens).toBe(1000)
+	})
+
+	it("should correctly format complex messages using convertAnthropicMessageToGemini", async () => {
+		const stream = new ReadableStream({
+			start(controller) {
+				controller.close()
+			},
+		})
+		const response = {
+			ok: true,
+			body: stream,
+			text: () => Promise.resolve(""),
+		}
+		fetchMock.mockResolvedValue(response)
+
+		// Create a message with tool use structure that would have been JSON-stringified naively
+		const messages = [
+			{
+				role: "assistant",
+				content: [
+					{ type: "text", text: "I will run this." },
+					{ type: "tool_use", id: "call_1", name: "execute_command", input: { command: "ls" } },
+				],
+			},
+		]
+
+		// Mock toolIdToName logic if needed, but here we just want to see the request body structure
+		const generator = handler.createMessage("system prompt", messages as any)
+		await generator.next()
+
+		const callArgs = JSON.parse(fetchMock.mock.calls[0][1].body)
+		const contents = callArgs.contents
+
+		// Should be a proper structure, NOT a JSON string in 'text'
+		expect(contents[0].parts[0]).toHaveProperty("text", "I will run this.")
+		expect(contents[0].parts[1]).toHaveProperty("functionCall")
+		expect(contents[0].parts[1].functionCall).toEqual({
+			name: "execute_command",
+			args: { command: "ls" },
+		})
 	})
 
 	it("should parse streaming JSON correctly", async () => {

@@ -69,7 +69,13 @@ function validateModelsAndKeysProvided(apiConfiguration: ProviderSettings): stri
 			}
 			break
 		case "vertex":
+			if (apiConfiguration.vertexApiKey) {
+				break
+			}
 			if (!apiConfiguration.vertexProjectId || !apiConfiguration.vertexRegion) {
+				if (!apiConfiguration.vertexApiKey) {
+					return i18next.t("settings:validation.apiKey")
+				}
 				return i18next.t("settings:validation.googleCloud")
 			}
 			break

@@ -99,6 +99,14 @@ export const Vertex = ({ apiConfiguration, setApiConfigurationField }: VertexPro
 					</SelectContent>
 				</Select>
 			</div>
+			<VSCodeTextField
+				value={apiConfiguration?.vertexApiKey || ""}
+				onInput={handleInputChange("vertexApiKey")}
+				type="password"
+				placeholder={t("settings:placeholders.apiKey")}
+				className="w-full">
+				<label className="block font-medium mb-1">{t("settings:providers.googleCloudApiKey")}</label>
+			</VSCodeTextField>
 
 			{supports1MContextBeta && (
 				<div>

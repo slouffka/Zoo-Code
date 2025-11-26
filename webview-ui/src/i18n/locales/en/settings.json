@@ -511,6 +511,7 @@
 		"googleCloudKeyFile": "Google Cloud Key File Path",
 		"googleCloudProjectId": "Google Cloud Project ID",
 		"googleCloudRegion": "Google Cloud Region",
+		"googleCloudApiKey": "Google Cloud Api Key",
 		"lmStudio": {
 			"baseUrl": "Base URL (optional)",
 			"modelId": "Model ID",

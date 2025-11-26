@@ -38,7 +38,7 @@ export class VertexHandler extends GeminiHandler implements SingleCompletionHand
 	 * No GCP project or OAuth required.
 	 */
 	private async *createMessageExpress(systemInstruction: string, messages: any[]): ApiStream {
-		const modelId = this.options.apiModelId || vertexDefaultModelId
+		const { id: model, info, maxTokens } = this.getModel()
 		const apiKey = this.options.vertexApiKey!
 
 		const googleMessages = messages.map((msg: any) => ({
@@ -47,7 +47,7 @@ export class VertexHandler extends GeminiHandler implements SingleCompletionHand
 		}))
 
 		// Handle specific model suffixes if present (e.g. :thinking)
-		const cleanModelId = modelId.endsWith(":thinking") ? modelId.replace(":thinking", "") : modelId
+		const cleanModelId = model.endsWith(":thinking") ? model.replace(":thinking", "") : model
 		const url = `https://aiplatform.googleapis.com/v1beta1/publishers/google/models/${cleanModelId}:streamGenerateContent?key=${apiKey}`
 
 		const response = await fetch(url, {
@@ -57,8 +57,8 @@ export class VertexHandler extends GeminiHandler implements SingleCompletionHand
 				systemInstruction: { parts: [{ text: systemInstruction }] },
 				contents: googleMessages,
 				generationConfig: {
-					temperature: this.options.modelTemperature ?? 0.0,
-					maxOutputTokens: this.options.modelMaxTokens ?? 8192,
+					temperature: this.options.modelTemperature ?? info.defaultTemperature ?? 1.0,
+					maxOutputTokens: this.options.modelMaxTokens ?? maxTokens ?? 8192,
 				},
 				safetySettings: [
 					{ category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_ONLY_HIGH" },
@@ -80,11 +80,11 @@ export class VertexHandler extends GeminiHandler implements SingleCompletionHand
 		let buffer = ""
 
 		try {
-			// State machine variables for JSON parsing
 			let inString = false
 			let escaped = false
 			let depth = 0
 			let startIndex = -1
+			let cursor = 0
 
 			while (true) {
 				const { done, value } = await reader.read()
@@ -93,15 +93,8 @@ export class VertexHandler extends GeminiHandler implements SingleCompletionHand
 				const chunkStr = decoder.decode(value, { stream: true })
 				buffer += chunkStr
 
-				// Reset state for current buffer processing
-				inString = false
-				escaped = false
-				depth = 0
-				startIndex = -1
-				let lastProcessedIndex = -1
-
-				for (let i = 0; i < buffer.length; i++) {
-					const char = buffer[i]
+				while (cursor < buffer.length) {
+					const char = buffer[cursor]
 
 					if (inString) {
 						if (char === "\\") {
@@ -115,40 +108,51 @@ export class VertexHandler extends GeminiHandler implements SingleCompletionHand
 						if (char === '"') {
 							inString = true
 						} else if (char === "{") {
-							if (depth === 0) startIndex = i
+							if (depth === 0) startIndex = cursor
 							depth++
 						} else if (char === "}") {
 							depth--
 							if (depth === 0 && startIndex !== -1) {
 								// Complete JSON object found
-								const jsonStr = buffer.substring(startIndex, i + 1)
+								const jsonStr = buffer.substring(startIndex, cursor + 1)
 								try {
 									const chunk = JSON.parse(jsonStr)
 
-									const text = chunk.candidates?.[0]?.content?.parts?.[0]?.text
-									if (text) yield { type: "text", text }
+									const candidate = chunk.candidates?.[0]
+									if (candidate?.content?.parts) {
+										for (const part of candidate.content.parts) {
+											if (part.text) yield { type: "text", text: part.text }
+										}
+									}
 
-									if (chunk.usageMetadata) {
+									const usage = chunk.usageMetadata || chunk.usage_metadata
+									if (usage) {
+										const inputTokens = usage.promptTokenCount ?? usage.prompt_token_count ?? 0
+										const outputTokens =
+											usage.candidatesTokenCount ?? usage.candidates_token_count ?? 0
 										yield {
 											type: "usage",
-											inputTokens: chunk.usageMetadata.promptTokenCount,
-											outputTokens: chunk.usageMetadata.candidatesTokenCount,
+											inputTokens,
+											outputTokens,
+											totalCost: this.calculateCost({
+												info,
+												inputTokens,
+												outputTokens,
+											}),
 										}
 									}
 								} catch (e) {
 									console.error("JSON Parse Error:", e)
 								}
 
-								lastProcessedIndex = i
+								// Remove processed data from buffer
+								buffer = buffer.substring(cursor + 1)
+								cursor = -1 // will be incremented to 0
 								startIndex = -1
 							}
 						}
 					}
-				}
-
-				// Remove processed data from buffer
-				if (lastProcessedIndex !== -1) {
-					buffer = buffer.substring(lastProcessedIndex + 1)
+					cursor++
 				}
 			}
 		} finally {

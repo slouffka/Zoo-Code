@@ -186,4 +186,37 @@ describe("VertexHandler Express Mode", () => {
 			{ type: "text", text: "Chunk" },
 		])
 	})
+
+	it("should parse <think> tags and emit reasoning events", async () => {
+		const chunks = [
+			'{"candidates": [{"content": {"parts": [{"text": "<think>This is a thought"}]}}]}',
+			'{"candidates": [{"content": {"parts": [{"text": " still thinking</think>"}]}}]}',
+			'{"candidates": [{"content": {"parts": [{"text": "This is the response"}]}}]}',
+		]
+
+		const encoder = new TextEncoder()
+		const stream = new ReadableStream({
+			start(controller) {
+				chunks.forEach((chunk) => controller.enqueue(encoder.encode(chunk)))
+				controller.close()
+			},
+		})
+
+		fetchMock.mockResolvedValue({
+			ok: true,
+			body: stream,
+			text: () => Promise.resolve(""),
+		})
+
+		const messages = []
+		for await (const msg of handler.createMessage("sys", [])) {
+			messages.push(msg)
+		}
+
+		expect(messages).toEqual([
+			{ type: "reasoning", text: "This is a thought" },
+			{ type: "reasoning", text: " still thinking" },
+			{ type: "text", text: "This is the response" },
+		])
+	})
 })

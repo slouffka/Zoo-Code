@@ -27,7 +27,7 @@ export class VertexHandler extends GeminiHandler implements SingleCompletionHand
 	): ApiStream {
 		// Vertex AI Express mode (API Key only)
 		if (this.options.vertexApiKey) {
-			yield* this.createMessageExpress(systemInstruction, messages)
+			yield* this.createMessageExpress(systemInstruction, messages, metadata)
 			return
 		}
 
@@ -39,7 +39,11 @@ export class VertexHandler extends GeminiHandler implements SingleCompletionHand
 	 * Express mode using direct API calls with API key only.
 	 * No GCP project or OAuth required.
 	 */
-	private async *createMessageExpress(systemInstruction: string, messages: any[]): ApiStream {
+	private async *createMessageExpress(
+		systemInstruction: string,
+		messages: any[],
+		metadata?: ApiHandlerCreateMessageMetadata,
+	): ApiStream {
 		const { id: model, info, maxTokens, reasoning: thinkingConfig } = this.getModel()
 		const apiKey = this.options.vertexApiKey!
 
@@ -70,6 +74,18 @@ export class VertexHandler extends GeminiHandler implements SingleCompletionHand
 			.map((message) => convertAnthropicMessageToGemini(message, { includeThoughtSignatures, toolIdToName }))
 			.flat()
 
+		// Build tools for Gemini API
+		const tools: any[] = []
+		if (metadata?.tools && metadata.tools.length > 0) {
+			tools.push({
+				functionDeclarations: metadata.tools.map((tool: any) => ({
+					name: tool.function.name,
+					description: tool.function.description,
+					parameters: tool.function.parameters,
+				})),
+			})
+		}
+
 		// Handle specific model suffixes if present (e.g. :thinking)
 		const cleanModelId = model.endsWith(":thinking") ? model.replace(":thinking", "") : model
 		const url = `https://aiplatform.googleapis.com/v1beta1/publishers/google/models/${cleanModelId}:streamGenerateContent?key=${apiKey}`
@@ -80,9 +96,11 @@ export class VertexHandler extends GeminiHandler implements SingleCompletionHand
 			body: JSON.stringify({
 				systemInstruction: { parts: [{ text: systemInstruction }] },
 				contents: googleMessages,
+				tools: tools.length > 0 ? tools : undefined,
 				generationConfig: {
 					temperature: this.options.modelTemperature ?? info.defaultTemperature ?? 1.0,
 					maxOutputTokens: this.options.modelMaxTokens ?? maxTokens ?? 8192,
+					...(thinkingConfig ? { thinkingConfig } : {}),
 				},
 				safetySettings: [
 					{ category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_ONLY_HIGH" },
@@ -104,11 +122,13 @@ export class VertexHandler extends GeminiHandler implements SingleCompletionHand
 		let buffer = ""
 
 		try {
+			let inThought = false
 			let inString = false
 			let escaped = false
 			let depth = 0
 			let startIndex = -1
 			let cursor = 0
+			let toolCallCounter = 0
 
 			while (true) {
 				const { done, value } = await reader.read()
@@ -145,7 +165,50 @@ export class VertexHandler extends GeminiHandler implements SingleCompletionHand
 									const candidate = chunk.candidates?.[0]
 									if (candidate?.content?.parts) {
 										for (const part of candidate.content.parts) {
-											if (part.text) yield { type: "text", text: part.text }
+											// Handle standard Gemini thought field if present
+											if (part.thought) {
+												if (part.text) {
+													yield { type: "reasoning", text: part.text }
+												}
+												continue
+											}
+
+											if (part.text) {
+												const parts = part.text.split(
+													/(<think(?:\s.*?)?>|<\/think(?:\s.*?)?>)/gi,
+												)
+												for (const p of parts) {
+													const lowerP = p.toLowerCase()
+													if (lowerP.startsWith("<think")) {
+														inThought = true
+													} else if (lowerP.startsWith("</think")) {
+														inThought = false
+													} else if (p.length > 0) {
+														yield { type: inThought ? "reasoning" : "text", text: p }
+													}
+												}
+											} else if (part.functionCall) {
+												const callId = `${part.functionCall.name}-${toolCallCounter}`
+												const args = JSON.stringify(part.functionCall.args)
+
+												yield {
+													type: "tool_call_partial",
+													index: toolCallCounter,
+													id: callId,
+													name: part.functionCall.name,
+													arguments: undefined,
+												}
+
+												yield {
+													type: "tool_call_partial",
+													index: toolCallCounter,
+													id: callId,
+													name: undefined,
+													arguments: args,
+												}
+
+												toolCallCounter++
+											}
 										}
 									}
 

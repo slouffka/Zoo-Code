@@ -81,7 +81,7 @@ export class VertexHandler extends GeminiHandler implements SingleCompletionHand
 				functionDeclarations: metadata.tools.map((tool: any) => ({
 					name: tool.function.name,
 					description: tool.function.description,
-					parameters: tool.function.parameters,
+					parameters: this.cleanSchema(tool.function.parameters),
 				})),
 			})
 		}
@@ -271,5 +271,55 @@ export class VertexHandler extends GeminiHandler implements SingleCompletionHand
 		// The actual model ID honored by Gemini's API does not have this
 		// suffix.
 		return { id: id.endsWith(":thinking") ? id.replace(":thinking", "") : id, info, ...params }
+	}
+
+	/**
+	 * Removes unsupported JSON schema keywords from the tool definition.
+	 * Vertex AI's Function Calling API is strict and rejects requests containing
+	 * standard JSON schema fields like "additionalProperties", "default",
+	 * and validation keywords (min/max/pattern) that are not supported in its Protobuf definition.
+	 */
+	private cleanSchema(schema: any): any {
+		if (!schema || typeof schema !== "object") return schema
+
+		if (Array.isArray(schema)) {
+			return schema.map((item) => this.cleanSchema(item))
+		}
+
+		const out: any = {}
+		for (const key in schema) {
+			if (
+				key === "exclusiveMinimum" ||
+				key === "exclusiveMaximum" ||
+				key === "minimum" ||
+				key === "maximum" ||
+				key === "multipleOf" ||
+				key === "minLength" ||
+				key === "maxLength" ||
+				key === "pattern" ||
+				key === "additionalProperties" ||
+				key === "title" ||
+				key === "default" ||
+				key === "examples" ||
+				key === "$schema" ||
+				key === "$id"
+			) {
+				continue
+			}
+
+			if (key === "type" && Array.isArray(schema[key])) {
+				// Vertex AI doesn't support array types (e.g. ["string", "null"])
+				// Use the first non-null type
+				const firstType = schema[key].find((t: string) => t !== "null")
+				out[key] = firstType || schema[key][0]
+				if (schema[key].includes("null")) {
+					out["nullable"] = true
+				}
+				continue
+			}
+
+			out[key] = this.cleanSchema(schema[key])
+		}
+		return out
 	}
 }

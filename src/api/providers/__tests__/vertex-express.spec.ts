@@ -219,4 +219,88 @@ describe("VertexHandler Express Mode", () => {
 			{ type: "text", text: "This is the response" },
 		])
 	})
+
+	it("should include tools in request and clean schema parameters", async () => {
+		const stream = new ReadableStream({
+			start(controller) {
+				controller.close()
+			},
+		})
+		const response = {
+			ok: true,
+			body: stream,
+			text: () => Promise.resolve(""),
+		}
+		fetchMock.mockResolvedValue(response)
+
+		const tools = [
+			{
+				name: "test_tool",
+				description: "A test tool",
+				parameters: {
+					type: "object",
+					properties: {
+						param1: {
+							type: "string",
+							description: "Parameter 1",
+							default: "default_value",
+						},
+						param2: {
+							type: "integer",
+							minimum: 0,
+							maximum: 10,
+							exclusiveMaximum: true,
+						},
+						param3: {
+							type: ["string", "null"],
+							description: "A nullable string",
+						},
+					},
+					required: ["param1"],
+					additionalProperties: false,
+				},
+			},
+		]
+
+		// Pass tools in metadata
+		const generator = handler.createMessage("system prompt", [], {
+			tools: tools.map((t) => ({
+				type: "function",
+				function: {
+					name: t.name,
+					description: t.description,
+					parameters: t.parameters,
+				},
+			})),
+		})
+		await generator.next()
+
+		const callArgs = JSON.parse(fetchMock.mock.calls[0][1].body)
+		const sentTools = callArgs.tools
+
+		expect(sentTools).toHaveLength(1)
+		expect(sentTools[0].functionDeclarations).toHaveLength(1)
+
+		const decl = sentTools[0].functionDeclarations[0]
+		expect(decl.name).toBe("test_tool")
+		expect(decl.description).toBe("A test tool")
+
+		// Verify schema cleaning
+		const params = decl.parameters
+		expect(params).not.toHaveProperty("additionalProperties")
+		expect(params.properties.param1).not.toHaveProperty("default")
+		expect(params.properties.param2).not.toHaveProperty("exclusiveMaximum")
+		expect(params.properties.param2).not.toHaveProperty("minimum")
+		expect(params.properties.param2).not.toHaveProperty("maximum")
+
+		// Verify preserved fields
+		expect(params.properties.param1.type).toBe("string")
+		expect(params.properties.param1.description).toBe("Parameter 1")
+		expect(params.properties.param2.type).toBe("integer")
+		expect(params.required).toEqual(["param1"])
+
+		// Verify array type flattening (nullable handling)
+		expect(params.properties.param3.type).toBe("string")
+		expect(params.properties.param3.nullable).toBe(true)
+	})
 })

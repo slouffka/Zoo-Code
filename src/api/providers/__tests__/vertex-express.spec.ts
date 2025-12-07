@@ -386,4 +386,61 @@ describe("VertexHandler Express Mode", () => {
 		expect(lastMessage.role).toBe("function")
 		expect(lastMessage.parts[0]).toHaveProperty("functionResponse")
 	})
+
+	it("should correctly handle apply_patch tool schema", async () => {
+		const stream = new ReadableStream({
+			start(controller) {
+				controller.close()
+			},
+		})
+		const response = {
+			ok: true,
+			body: stream,
+			text: () => Promise.resolve(""),
+		}
+		fetchMock.mockResolvedValue(response)
+
+		const applyPatchTool = {
+			name: "apply_patch",
+			description: "Apply patches to files.",
+			parameters: {
+				type: "object",
+				properties: {
+					patch: {
+						type: "string",
+						description: "The complete patch text.",
+					},
+				},
+				required: ["patch"],
+				additionalProperties: false,
+			},
+		}
+
+		const generator = handler.createMessage("system prompt", [], {
+			tools: [
+				{
+					type: "function",
+					function: applyPatchTool,
+				},
+			],
+			taskId: "test-task-id",
+		})
+		await generator.next()
+
+		const callArgs = JSON.parse(fetchMock.mock.calls[0][1].body)
+		const sentTools = callArgs.tools
+
+		expect(sentTools).toHaveLength(1)
+		expect(sentTools[0].functionDeclarations).toHaveLength(1)
+
+		const decl = sentTools[0].functionDeclarations[0]
+		expect(decl.name).toBe("apply_patch")
+		expect(decl.description).toBe("Apply patches to files.")
+
+		const params = decl.parameters
+		expect(params).not.toHaveProperty("additionalProperties")
+		expect(params.properties.patch.type).toBe("string")
+		expect(params.properties.patch.description).toBe("The complete patch text.")
+		expect(params.required).toEqual(["patch"])
+	})
 })

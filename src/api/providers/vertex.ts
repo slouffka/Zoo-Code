@@ -73,6 +73,31 @@ export class VertexHandler extends GeminiHandler implements SingleCompletionHand
 		const googleMessages = geminiMessages
 			.map((message) => convertAnthropicMessageToGemini(message, { includeThoughtSignatures, toolIdToName }))
 			.flat()
+			.map((content) => {
+				// Vertex AI requires that functionResponse parts be sent with role: "function"
+				if (content.parts?.some((part) => "functionResponse" in part)) {
+					content.role = "function"
+				}
+
+				// Clean up functionResponse: Vertex AI rejects the inner 'name' field in the response object
+				// which is produced by the shared gemini-format utility (optimized for Google AI Studio).
+				if (content.parts) {
+					content.parts = content.parts.map((part: any) => {
+						if (part.functionResponse?.response?.name) {
+							const { name, ...rest } = part.functionResponse.response
+							return {
+								...part,
+								functionResponse: {
+									...part.functionResponse,
+									response: rest,
+								},
+							}
+						}
+						return part
+					})
+				}
+				return content
+			})
 
 		// Build tools for Gemini API
 		const tools: any[] = []
@@ -296,13 +321,30 @@ export class VertexHandler extends GeminiHandler implements SingleCompletionHand
 				key === "multipleOf" ||
 				key === "minLength" ||
 				key === "maxLength" ||
+				key === "minItems" ||
+				key === "maxItems" ||
+				key === "uniqueItems" ||
 				key === "pattern" ||
+				key === "const" ||
 				key === "additionalProperties" ||
 				key === "title" ||
 				key === "default" ||
 				key === "examples" ||
 				key === "$schema" ||
-				key === "$id"
+				key === "$id" ||
+				key === "unevaluatedProperties" ||
+				key === "propertyNames" ||
+				key === "minProperties" ||
+				key === "maxProperties" ||
+				key === "allOf" ||
+				key === "oneOf" ||
+				key === "anyOf" ||
+				key === "not" ||
+				key === "if" ||
+				key === "then" ||
+				key === "else" ||
+				key === "dependentRequired" ||
+				key === "dependentSchemas"
 			) {
 				continue
 			}

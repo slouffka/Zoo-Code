@@ -250,10 +250,13 @@ describe("VertexHandler Express Mode", () => {
 							minimum: 0,
 							maximum: 10,
 							exclusiveMaximum: true,
+							const: 5,
 						},
 						param3: {
 							type: ["string", "null"],
 							description: "A nullable string",
+							minItems: 1,
+							allOf: [{ type: "string" }],
 						},
 					},
 					required: ["param1"],
@@ -272,6 +275,7 @@ describe("VertexHandler Express Mode", () => {
 					parameters: t.parameters,
 				},
 			})),
+			taskId: "test-task-id",
 		})
 		await generator.next()
 
@@ -292,6 +296,9 @@ describe("VertexHandler Express Mode", () => {
 		expect(params.properties.param2).not.toHaveProperty("exclusiveMaximum")
 		expect(params.properties.param2).not.toHaveProperty("minimum")
 		expect(params.properties.param2).not.toHaveProperty("maximum")
+		expect(params.properties.param2).not.toHaveProperty("const")
+		expect(params.properties.param3).not.toHaveProperty("minItems")
+		expect(params.properties.param3).not.toHaveProperty("allOf")
 
 		// Verify preserved fields
 		expect(params.properties.param1.type).toBe("string")
@@ -302,5 +309,81 @@ describe("VertexHandler Express Mode", () => {
 		// Verify array type flattening (nullable handling)
 		expect(params.properties.param3.type).toBe("string")
 		expect(params.properties.param3.nullable).toBe(true)
+	})
+
+	it("should clean up functionResponse structure for Vertex AI", async () => {
+		const stream = new ReadableStream({
+			start(controller) {
+				controller.close()
+			},
+		})
+		const response = {
+			ok: true,
+			body: stream,
+			text: () => Promise.resolve(""),
+		}
+		fetchMock.mockResolvedValue(response)
+
+		// Mock a tool_use followed by a tool_result
+		const messages = [
+			{
+				role: "assistant",
+				content: [{ type: "tool_use", id: "call_1", name: "read_file", input: { path: "test.ts" } }],
+			},
+			{
+				role: "user",
+				content: [{ type: "tool_result", tool_use_id: "call_1", content: "file content" }],
+			},
+		]
+
+		const generator = handler.createMessage("system prompt", messages as any)
+		await generator.next()
+
+		const callArgs = JSON.parse(fetchMock.mock.calls[0][1].body)
+		const contents = callArgs.contents
+
+		// Verify the functionResponse part
+		const lastMessage = contents[contents.length - 1]
+		expect(lastMessage.role).toBe("function")
+		const functionResponsePart = lastMessage.parts[0]
+
+		expect(functionResponsePart).toHaveProperty("functionResponse")
+		expect(functionResponsePart.functionResponse).toHaveProperty("name", "read_file")
+		expect(functionResponsePart.functionResponse.response).toHaveProperty("content", "file content")
+		// The key fix: confirm 'name' is NOT in the inner response object
+		expect(functionResponsePart.functionResponse.response).not.toHaveProperty("name")
+	})
+
+	it("should set role to 'function' for messages with functionResponse", async () => {
+		const stream = new ReadableStream({
+			start(controller) {
+				controller.close()
+			},
+		})
+		fetchMock.mockResolvedValue({
+			ok: true,
+			body: stream,
+			text: () => Promise.resolve(""),
+		})
+
+		const messages = [
+			{
+				role: "assistant",
+				content: [{ type: "tool_use", id: "call_1", name: "read_file", input: { path: "test.ts" } }],
+			},
+			{
+				role: "user",
+				content: [{ type: "tool_result", tool_use_id: "call_1", content: "result" }],
+			},
+		]
+
+		const generator = handler.createMessage("system prompt", messages as any)
+		await generator.next()
+
+		const callArgs = JSON.parse(fetchMock.mock.calls[0][1].body)
+		const lastMessage = callArgs.contents[callArgs.contents.length - 1]
+
+		expect(lastMessage.role).toBe("function")
+		expect(lastMessage.parts[0]).toHaveProperty("functionResponse")
 	})
 })

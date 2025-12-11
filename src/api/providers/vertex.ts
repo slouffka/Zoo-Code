@@ -113,7 +113,7 @@ export class VertexHandler extends GeminiHandler implements SingleCompletionHand
 
 		// Handle specific model suffixes if present (e.g. :thinking)
 		const cleanModelId = model.endsWith(":thinking") ? model.replace(":thinking", "") : model
-		const url = `https://aiplatform.googleapis.com/v1beta1/publishers/google/models/${cleanModelId}:streamGenerateContent?key=${apiKey}`
+		const url = `https://aiplatform.googleapis.com/v1/publishers/google/models/${cleanModelId}:streamGenerateContent?key=${apiKey}`
 
 		const response = await fetch(url, {
 			method: "POST",

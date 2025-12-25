@@ -8,7 +8,7 @@ import { convertAnthropicMessageToGemini } from "../transform/gemini-format"
 
 import { GeminiHandler } from "./gemini"
 import type { SingleCompletionHandler, ApiHandlerCreateMessageMetadata } from "../index"
-import type { ApiStream } from "../transform/stream"
+import type { ApiStream, GroundingSource } from "../transform/stream"
 
 /**
  * Vertex AI provider.
@@ -46,6 +46,10 @@ export class VertexHandler extends GeminiHandler implements SingleCompletionHand
 	): ApiStream {
 		const { id: model, info, maxTokens, reasoning: thinkingConfig } = this.getModel()
 		const apiKey = this.options.vertexApiKey!
+
+		// Reset per-request metadata that we persist into apiConversationHistory.
+		this.lastThoughtSignature = undefined
+		this.lastResponseId = undefined
 
 		// Only forward encrypted reasoning continuations (thoughtSignature) when we are
 		// using reasoning (thinkingConfig is present). Both effort-based (thinkingLevel)
@@ -109,6 +113,15 @@ export class VertexHandler extends GeminiHandler implements SingleCompletionHand
 					parameters: this.cleanSchema(tool.function.parameters),
 				})),
 			})
+		} else {
+			// Google built-in tools are mutually exclusive with function declarations
+			if (this.options.enableUrlContext) {
+				tools.push({ urlContext: {} })
+			}
+
+			if (this.options.enableGrounding) {
+				tools.push({ googleSearchRetrieval: {} })
+			}
 		}
 
 		// Handle specific model suffixes if present (e.g. :thinking)
@@ -154,6 +167,7 @@ export class VertexHandler extends GeminiHandler implements SingleCompletionHand
 			let startIndex = -1
 			let cursor = 0
 			let toolCallCounter = 0
+			let pendingGroundingMetadata: any | undefined
 
 			while (true) {
 				const { done, value } = await reader.read()
@@ -187,52 +201,69 @@ export class VertexHandler extends GeminiHandler implements SingleCompletionHand
 								try {
 									const chunk = JSON.parse(jsonStr)
 
+									if (chunk.responseId) {
+										this.lastResponseId = chunk.responseId
+									}
+
 									const candidate = chunk.candidates?.[0]
-									if (candidate?.content?.parts) {
-										for (const part of candidate.content.parts) {
-											// Handle standard Gemini thought field if present
-											if (part.thought) {
-												if (part.text) {
-													yield { type: "reasoning", text: part.text }
-												}
-												continue
-											}
+									if (candidate) {
+										if (candidate.groundingMetadata) {
+											pendingGroundingMetadata = candidate.groundingMetadata
+										}
 
-											if (part.text) {
-												const parts = part.text.split(
-													/(<think(?:\s.*?)?>|<\/think(?:\s.*?)?>)/gi,
-												)
-												for (const p of parts) {
-													const lowerP = p.toLowerCase()
-													if (lowerP.startsWith("<think")) {
-														inThought = true
-													} else if (lowerP.startsWith("</think")) {
-														inThought = false
-													} else if (p.length > 0) {
-														yield { type: inThought ? "reasoning" : "text", text: p }
+										if (candidate.content?.parts) {
+											for (const part of candidate.content.parts) {
+												if (part.thoughtSignature && thinkingConfig) {
+													this.lastThoughtSignature = part.thoughtSignature
+												}
+
+												// Handle standard Gemini thought field if present
+												if (part.thought) {
+													if (part.text) {
+														yield { type: "reasoning", text: part.text }
 													}
-												}
-											} else if (part.functionCall) {
-												const callId = `${part.functionCall.name}-${toolCallCounter}`
-												const args = JSON.stringify(part.functionCall.args)
-
-												yield {
-													type: "tool_call_partial",
-													index: toolCallCounter,
-													id: callId,
-													name: part.functionCall.name,
-													arguments: undefined,
+													continue
 												}
 
-												yield {
-													type: "tool_call_partial",
-													index: toolCallCounter,
-													id: callId,
-													name: undefined,
-													arguments: args,
-												}
+												if (part.text) {
+													const parts = part.text.split(
+														/(<think(?:\s.*?)?>|<\/think(?:\s.*?)?>)/gi,
+													)
+													for (const p of parts) {
+														const lowerP = p.toLowerCase()
+														if (lowerP.startsWith("<think")) {
+															inThought = true
+														} else if (lowerP.startsWith("</think")) {
+															inThought = false
+														} else if (p.length > 0) {
+															yield {
+																type: inThought ? "reasoning" : "text",
+																text: p,
+															}
+														}
+													}
+												} else if (part.functionCall) {
+													const callId = `${part.functionCall.name}-${toolCallCounter}`
+													const args = JSON.stringify(part.functionCall.args)
 
-												toolCallCounter++
+													yield {
+														type: "tool_call_partial",
+														index: toolCallCounter,
+														id: callId,
+														name: part.functionCall.name,
+														arguments: undefined,
+													}
+
+													yield {
+														type: "tool_call_partial",
+														index: toolCallCounter,
+														id: callId,
+														name: undefined,
+														arguments: args,
+													}
+
+													toolCallCounter++
+												}
 											}
 										}
 									}
@@ -267,6 +298,13 @@ export class VertexHandler extends GeminiHandler implements SingleCompletionHand
 					cursor++
 				}
 			}
+
+			if (pendingGroundingMetadata) {
+				const sources = this.extractGroundingSources(pendingGroundingMetadata)
+				if (sources.length > 0) {
+					yield { type: "grounding", sources }
+				}
+			}
 		} finally {
 			reader.releaseLock()
 		}
@@ -298,6 +336,29 @@ export class VertexHandler extends GeminiHandler implements SingleCompletionHand
 		return { id: id.endsWith(":thinking") ? id.replace(":thinking", "") : id, info, ...params }
 	}
 
+	protected override extractGroundingSources(groundingMetadata: any): GroundingSource[] {
+		const chunks = groundingMetadata?.groundingChunks
+
+		if (!chunks) {
+			return []
+		}
+
+		return chunks
+			.map((chunk: any): GroundingSource | null => {
+				const uri = chunk.web?.uri
+				const title = chunk.web?.title || uri || "Unknown Source"
+
+				if (uri) {
+					return {
+						title,
+						url: uri,
+					}
+				}
+				return null
+			})
+			.filter((source: any): source is GroundingSource => source !== null)
+	}
+
 	/**
 	 * Removes unsupported JSON schema keywords from the tool definition.
 	 * Vertex AI's Function Calling API is strict and rejects requests containing
@@ -313,6 +374,14 @@ export class VertexHandler extends GeminiHandler implements SingleCompletionHand
 
 		const out: any = {}
 		for (const key in schema) {
+			if (key === "properties") {
+				out[key] = {}
+				for (const propertyKey in schema[key]) {
+					out[key][propertyKey] = this.cleanSchema(schema[key][propertyKey])
+				}
+				continue
+			}
+
 			if (
 				key === "exclusiveMinimum" ||
 				key === "exclusiveMaximum" ||

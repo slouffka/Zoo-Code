@@ -443,4 +443,198 @@ describe("VertexHandler Express Mode", () => {
 		expect(params.properties.patch.description).toBe("The complete patch text.")
 		expect(params.required).toEqual(["patch"])
 	})
+
+	it("should preserve properties named 'title' in tool schema", async () => {
+		const stream = new ReadableStream({
+			start(controller) {
+				controller.close()
+			},
+		})
+		const response = {
+			ok: true,
+			body: stream,
+			text: () => Promise.resolve(""),
+		}
+		fetchMock.mockResolvedValue(response)
+
+		const tools = [
+			{
+				name: "create_task",
+				description: "Create a task",
+				parameters: {
+					type: "object",
+					properties: {
+						title: {
+							type: "string",
+							description: "The title of the task",
+						},
+						description: {
+							type: "string",
+						},
+					},
+					required: ["title"],
+				},
+			},
+		]
+
+		const generator = handler.createMessage("system prompt", [], {
+			tools: tools.map((t) => ({
+				type: "function",
+				function: {
+					name: t.name,
+					description: t.description,
+					parameters: t.parameters,
+				},
+			})),
+			taskId: "test-task-id",
+		})
+		await generator.next()
+
+		const callArgs = JSON.parse(fetchMock.mock.calls[0][1].body)
+		const sentTools = callArgs.tools
+		const decl = sentTools[0].functionDeclarations[0]
+		const params = decl.parameters
+
+		expect(params.properties).toHaveProperty("title")
+		expect(params.properties.title.type).toBe("string")
+		expect(params.required).toContain("title")
+	})
+
+	it("should add googleSearchRetrieval tool when enableGrounding is true and no tools are present", async () => {
+		const stream = new ReadableStream({
+			start(controller) {
+				controller.close()
+			},
+		})
+		const response = {
+			ok: true,
+			body: stream,
+			text: () => Promise.resolve(""),
+		}
+		fetchMock.mockResolvedValue(response)
+
+		// Enable grounding in options
+		const groundingHandler = new VertexHandler({
+			...options,
+			enableGrounding: true,
+		})
+
+		const generator = groundingHandler.createMessage("system prompt", [])
+		await generator.next()
+
+		const callArgs = JSON.parse(fetchMock.mock.calls[0][1].body)
+		const sentTools = callArgs.tools
+
+		expect(sentTools).toHaveLength(1)
+		expect(sentTools[0]).toHaveProperty("googleSearchRetrieval")
+	})
+
+	it("should add urlContext tool when enableUrlContext is true and no tools are present", async () => {
+		const stream = new ReadableStream({
+			start(controller) {
+				controller.close()
+			},
+		})
+		const response = {
+			ok: true,
+			body: stream,
+			text: () => Promise.resolve(""),
+		}
+		fetchMock.mockResolvedValue(response)
+
+		// Enable URL context in options
+		const urlContextHandler = new VertexHandler({
+			...options,
+			enableUrlContext: true,
+		})
+
+		const generator = urlContextHandler.createMessage("system prompt", [])
+		await generator.next()
+
+		const callArgs = JSON.parse(fetchMock.mock.calls[0][1].body)
+		const sentTools = callArgs.tools
+
+		expect(sentTools).toHaveLength(1)
+		expect(sentTools[0]).toHaveProperty("urlContext")
+	})
+
+	it("should capture responseId and thoughtSignature from chunks", async () => {
+		const chunks = [
+			JSON.stringify({
+				responseId: "test-response-id",
+				candidates: [
+					{
+						content: {
+							parts: [{ text: "Hello", thoughtSignature: "test-thought-sig" }],
+						},
+					},
+				],
+			}),
+		]
+
+		const encoder = new TextEncoder()
+		const stream = new ReadableStream({
+			start(controller) {
+				chunks.forEach((chunk) => controller.enqueue(encoder.encode(chunk)))
+				controller.close()
+			},
+		})
+
+		fetchMock.mockResolvedValue({
+			ok: true,
+			body: stream,
+			text: () => Promise.resolve(""),
+		})
+
+		// Use model with reasoning to enable thoughtSignature capture
+		const reasoningHandler = new VertexHandler({
+			...options,
+			apiModelId: "gemini-2.5-flash-preview-05-20:thinking",
+		})
+
+		for await (const msg of reasoningHandler.createMessage("sys", [])) {
+			// consume stream
+		}
+
+		expect(reasoningHandler.getResponseId()).toBe("test-response-id")
+		expect(reasoningHandler.getThoughtSignature()).toBe("test-thought-sig")
+	})
+
+	it("should yield grounding sources at the end of the stream", async () => {
+		const chunks = [
+			JSON.stringify({
+				candidates: [
+					{
+						content: { parts: [{ text: "Grounding info" }] },
+						groundingMetadata: {
+							groundingChunks: [{ web: { uri: "https://example.com", title: "Example" } }],
+						},
+					},
+				],
+			}),
+		]
+
+		const encoder = new TextEncoder()
+		const stream = new ReadableStream({
+			start(controller) {
+				chunks.forEach((chunk) => controller.enqueue(encoder.encode(chunk)))
+				controller.close()
+			},
+		})
+
+		fetchMock.mockResolvedValue({
+			ok: true,
+			body: stream,
+			text: () => Promise.resolve(""),
+		})
+
+		const messages = []
+		for await (const msg of handler.createMessage("sys", [])) {
+			messages.push(msg)
+		}
+
+		const groundingMsg = messages.find((m) => m.type === "grounding")
+		expect(groundingMsg).toBeDefined()
+		expect(groundingMsg?.sources).toEqual([{ title: "Example", url: "https://example.com" }])
+	})
 })

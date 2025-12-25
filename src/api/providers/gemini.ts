@@ -36,9 +36,9 @@ type GeminiHandlerOptions = ApiHandlerOptions & {
 export class GeminiHandler extends BaseProvider implements SingleCompletionHandler {
 	protected options: ApiHandlerOptions
 
-	private client: GoogleGenAI
-	private lastThoughtSignature?: string
-	private lastResponseId?: string
+	protected client: GoogleGenAI
+	protected lastThoughtSignature?: string
+	protected lastResponseId?: string
 	private readonly providerName = "Gemini"
 
 	constructor({ isVertex, ...options }: GeminiHandlerOptions) {
@@ -373,7 +373,7 @@ export class GeminiHandler extends BaseProvider implements SingleCompletionHandl
 		return { id: id.endsWith(":thinking") ? id.replace(":thinking", "") : id, info, ...params }
 	}
 
-	private extractGroundingSources(groundingMetadata?: GroundingMetadata): GroundingSource[] {
+	protected extractGroundingSources(groundingMetadata?: GroundingMetadata): GroundingSource[] {
 		const chunks = groundingMetadata?.groundingChunks
 
 		if (!chunks) {

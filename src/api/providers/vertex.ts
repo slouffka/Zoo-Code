@@ -359,6 +359,14 @@ export class VertexHandler extends GeminiHandler implements SingleCompletionHand
 			.filter((source: any): source is GroundingSource => source !== null)
 	}
 
+	public override getResponseId(): string | undefined {
+		return this.lastResponseId
+	}
+
+	public override getThoughtSignature(): string | undefined {
+		return this.lastThoughtSignature
+	}
+
 	/**
 	 * Removes unsupported JSON schema keywords from the tool definition.
 	 * Vertex AI's Function Calling API is strict and rejects requests containing

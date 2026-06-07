@@ -6,6 +6,32 @@ export type GeminiModelId = keyof typeof geminiModels
 export const geminiDefaultModelId: GeminiModelId = "gemini-3.1-pro-preview"
 
 export const geminiModels = {
+	"gemini-3.5-flash": {
+		maxTokens: 65_536,
+		contextWindow: 1_048_576,
+		supportsImages: true,
+		supportsPromptCache: true,
+		supportsReasoningEffort: ["minimal", "low", "medium", "high"],
+		reasoningEffort: "medium",
+		supportsTemperature: true,
+		defaultTemperature: 1,
+		inputPrice: 1.5,
+		outputPrice: 9.0,
+		cacheReadsPrice: 0.15,
+	},
+	"gemini-3.1-flash-lite": {
+		maxTokens: 65_536,
+		contextWindow: 1_048_576,
+		supportsImages: true,
+		supportsPromptCache: true,
+		supportsReasoningEffort: ["minimal", "low", "medium", "high"],
+		reasoningEffort: "low",
+		supportsTemperature: true,
+		defaultTemperature: 1,
+		inputPrice: 0.25,
+		outputPrice: 1.5,
+		cacheReadsPrice: 0.025,
+	},
 	"gemini-3.1-pro-preview": {
 		maxTokens: 65_536,
 		contextWindow: 1_048_576,

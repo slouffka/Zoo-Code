@@ -27,7 +27,30 @@ export class VertexHandler extends GeminiHandler implements SingleCompletionHand
 	): ApiStream {
 		// Vertex AI Express mode (API Key only)
 		if (this.options.vertexApiKey) {
-			yield* this.createMessageExpress(systemInstruction, messages, metadata)
+			try {
+				let hasAssistantContent = false
+				for await (const chunk of this.createMessageExpress(systemInstruction, messages, metadata)) {
+					if (chunk.type === "text" || chunk.type === "tool_call_partial" || chunk.type === "reasoning") {
+						hasAssistantContent = true
+					}
+					yield chunk
+				}
+
+				if (!hasAssistantContent) {
+					console.warn("Vertex Express: createMessage yielded no assistant content, yielding placeholder")
+					yield { type: "text", text: " " }
+				}
+			} catch (error) {
+				const errorMessage = error instanceof Error ? error.message : String(error)
+				console.error(`Vertex Express creation error: ${errorMessage}`)
+
+				// Propagate detailed error to prevent generic "Model Response Incomplete"
+				if (errorMessage.includes("Finish Reason")) {
+					yield { type: "text", text: `Error: ${errorMessage}` }
+				}
+
+				throw error
+			}
 			return
 		}
 
@@ -38,6 +61,7 @@ export class VertexHandler extends GeminiHandler implements SingleCompletionHand
 	/**
 	 * Express mode using direct API calls with API key only.
 	 * No GCP project or OAuth required.
+	 * Documentation: https://docs.cloud.google.com/gemini-enterprise-agent-platform/reference/express-mode/api-reference
 	 */
 	private async *createMessageExpress(
 		systemInstruction: string,
@@ -47,22 +71,19 @@ export class VertexHandler extends GeminiHandler implements SingleCompletionHand
 		const { id: model, info, maxTokens, reasoning: thinkingConfig } = this.getModel()
 		const apiKey = this.options.vertexApiKey!
 
-		// Reset per-request metadata that we persist into apiConversationHistory.
+		// Reset per-request metadata
 		this.lastThoughtSignature = undefined
 		this.lastResponseId = undefined
 
-		// Only forward encrypted reasoning continuations (thoughtSignature) when we are
-		// using reasoning (thinkingConfig is present). Both effort-based (thinkingLevel)
-		// and budget-based (thinkingBudget) models require this for active loops.
 		const includeThoughtSignatures = Boolean(thinkingConfig)
 
-		// Filter out "reasoning" meta messages that are not valid Anthropic messages
+		// Filter reasoning messages
 		const geminiMessages = messages.filter((message) => {
 			const meta = message as { type?: string }
 			return meta.type !== "reasoning"
 		}) as Anthropic.Messages.MessageParam[]
 
-		// Build a map of tool IDs to names from previous messages
+		// Build tool map
 		const toolIdToName = new Map<string, string>()
 		for (const message of messages) {
 			if (Array.isArray(message.content)) {
@@ -84,18 +105,25 @@ export class VertexHandler extends GeminiHandler implements SingleCompletionHand
 				}
 
 				// Clean up functionResponse: Vertex AI rejects the inner 'name' field in the response object
-				// which is produced by the shared gemini-format utility (optimized for Google AI Studio).
 				if (content.parts) {
 					content.parts = content.parts.map((part: any) => {
-						if (part.functionResponse?.response?.name) {
-							const { name, ...rest } = part.functionResponse.response
-							return {
-								...part,
-								functionResponse: {
-									...part.functionResponse,
-									response: rest,
-								},
+						if (part.thoughtSignature) {
+							const { thoughtSignature, ...rest } = part
+							return { ...rest, thought_signature: thoughtSignature }
+						}
+						if (part.functionResponse) {
+							const { functionResponse, ...rest } = part
+							if (functionResponse.response?.name) {
+								const { name, ...innerRest } = functionResponse.response
+								return {
+									...rest,
+									function_response: {
+										...functionResponse,
+										response: innerRest,
+									},
+								}
 							}
+							return { ...rest, function_response: functionResponse }
 						}
 						return part
 					})
@@ -103,11 +131,10 @@ export class VertexHandler extends GeminiHandler implements SingleCompletionHand
 				return content
 			})
 
-		// Build tools for Gemini API
 		const tools: any[] = []
 		if (metadata?.tools && metadata.tools.length > 0) {
 			tools.push({
-				functionDeclarations: metadata.tools.map((tool: any) => ({
+				function_declarations: metadata.tools.map((tool: any) => ({
 					name: tool.function.name,
 					description: tool.function.description,
 					parameters: this.cleanSchema(tool.function.parameters),
@@ -116,41 +143,62 @@ export class VertexHandler extends GeminiHandler implements SingleCompletionHand
 		} else {
 			// Google built-in tools are mutually exclusive with function declarations
 			if (this.options.enableUrlContext) {
-				tools.push({ urlContext: {} })
+				tools.push({ url_context: {} })
 			}
 
 			if (this.options.enableGrounding) {
-				tools.push({ googleSearchRetrieval: {} })
+				tools.push({ google_search_retrieval: {} })
 			}
 		}
 
-		// Handle specific model suffixes if present (e.g. :thinking)
 		const cleanModelId = model.endsWith(":thinking") ? model.replace(":thinking", "") : model
 		const url = `https://aiplatform.googleapis.com/v1/publishers/google/models/${cleanModelId}:streamGenerateContent?key=${apiKey}`
+
+		// Convert thinkingConfig from camelCase (SDK format) to snake_case (REST API format)
+		const thinkingConfigSnakeCase = thinkingConfig
+			? {
+					...(thinkingConfig.thinkingBudget !== undefined
+						? { thinking_budget: thinkingConfig.thinkingBudget }
+						: {}),
+					...(thinkingConfig.thinkingLevel !== undefined
+						? { thinking_level: thinkingConfig.thinkingLevel }
+						: {}),
+					...(thinkingConfig.includeThoughts !== undefined
+						? { include_thoughts: thinkingConfig.includeThoughts }
+						: {}),
+				}
+			: undefined
+
+		const body = {
+			system_instruction: { parts: [{ text: systemInstruction }] },
+			contents: googleMessages,
+			tools: tools.length > 0 ? tools : undefined,
+			generation_config: {
+				temperature: this.options.modelTemperature ?? info.defaultTemperature ?? 1.0,
+				max_output_tokens: this.options.modelMaxTokens ?? maxTokens ?? 8192,
+				...(thinkingConfigSnakeCase ? { thinking_config: thinkingConfigSnakeCase } : {}),
+			},
+			safety_settings: [
+				{ category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_NONE" },
+				{ category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_NONE" },
+				{ category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
+				{ category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_NONE" },
+				{ category: "HARM_CATEGORY_CIVIC_INTEGRITY", threshold: "BLOCK_NONE" },
+			],
+		}
+
+		console.log(`Vertex Express Request URL: ${url}`)
+		console.log(`Vertex Express Request Body: ${JSON.stringify(body, null, 2)}`)
 
 		const response = await fetch(url, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({
-				systemInstruction: { parts: [{ text: systemInstruction }] },
-				contents: googleMessages,
-				tools: tools.length > 0 ? tools : undefined,
-				generationConfig: {
-					temperature: this.options.modelTemperature ?? info.defaultTemperature ?? 1.0,
-					maxOutputTokens: this.options.modelMaxTokens ?? maxTokens ?? 8192,
-					...(thinkingConfig ? { thinkingConfig } : {}),
-				},
-				safetySettings: [
-					{ category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_ONLY_HIGH" },
-					{ category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_ONLY_HIGH" },
-					{ category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_ONLY_HIGH" },
-					{ category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_ONLY_HIGH" },
-				],
-			}),
+			body: JSON.stringify(body),
 		})
 
 		if (!response.ok) {
 			const errorText = await response.text()
+			console.error(`Vertex Express HTTP Error (${response.status}): ${errorText}`)
 			throw new Error(`Vertex Express Error (${response.status}): ${errorText}`)
 		}
 		if (!response.body) throw new Error("No response body")
@@ -168,84 +216,63 @@ export class VertexHandler extends GeminiHandler implements SingleCompletionHand
 			let cursor = 0
 			let toolCallCounter = 0
 			let pendingGroundingMetadata: any | undefined
+			let hasYieldedAssistantContent = false
 
 			while (true) {
 				const { done, value } = await reader.read()
 				if (done) break
 
-				const chunkStr = decoder.decode(value, { stream: true })
-				buffer += chunkStr
+				const decodedChunk = decoder.decode(value, { stream: true })
+				buffer += decodedChunk
 
 				while (cursor < buffer.length) {
 					const char = buffer[cursor]
-
 					if (inString) {
-						if (char === "\\") {
-							escaped = !escaped
-						} else if (char === '"' && !escaped) {
-							inString = false
-						} else {
-							escaped = false
-						}
+						if (char === "\\") escaped = !escaped
+						else if (char === '"' && !escaped) inString = false
+						else escaped = false
 					} else {
-						if (char === '"') {
-							inString = true
-						} else if (char === "{") {
+						if (char === '"') inString = true
+						else if (char === "{") {
 							if (depth === 0) startIndex = cursor
 							depth++
 						} else if (char === "}") {
 							depth--
 							if (depth === 0 && startIndex !== -1) {
-								// Complete JSON object found
 								const jsonStr = buffer.substring(startIndex, cursor + 1)
 								try {
 									const chunk = JSON.parse(jsonStr)
+									// Log raw chunk for debugging
+									console.log(`Vertex Express Chunk: ${JSON.stringify(chunk)}`)
 
-									if (chunk.responseId) {
-										this.lastResponseId = chunk.responseId
-									}
+									if (chunk.responseId) this.lastResponseId = chunk.responseId
 
 									const candidate = chunk.candidates?.[0]
 									if (candidate) {
-										if (candidate.groundingMetadata) {
+										if (candidate.groundingMetadata)
 											pendingGroundingMetadata = candidate.groundingMetadata
+
+										if (candidate.finishReason && candidate.finishReason !== "STOP") {
+											const reason = candidate.finishReason
+											if (["SAFETY", "RECITATION", "OTHER"].includes(reason)) {
+												throw new Error(`Vertex Express Finish Reason: ${reason}`)
+											}
 										}
 
 										if (candidate.content?.parts) {
 											for (const part of candidate.content.parts) {
-												if (part.thoughtSignature && thinkingConfig) {
-													this.lastThoughtSignature = part.thoughtSignature
+												if (
+													(part.thought_signature || part.thoughtSignature) &&
+													thinkingConfig
+												) {
+													this.lastThoughtSignature =
+														part.thought_signature || part.thoughtSignature
 												}
 
-												// Handle standard Gemini thought field if present
-												if (part.thought) {
-													if (part.text) {
-														yield { type: "reasoning", text: part.text }
-													}
-													continue
-												}
-
-												if (part.text) {
-													const parts = part.text.split(
-														/(<think(?:\s.*?)?>|<\/think(?:\s.*?)?>)/gi,
-													)
-													for (const p of parts) {
-														const lowerP = p.toLowerCase()
-														if (lowerP.startsWith("<think")) {
-															inThought = true
-														} else if (lowerP.startsWith("</think")) {
-															inThought = false
-														} else if (p.length > 0) {
-															yield {
-																type: inThought ? "reasoning" : "text",
-																text: p,
-															}
-														}
-													}
-												} else if (part.functionCall) {
+												// Function calls should never be treated as reasoning, even if they carry a thoughtSignature
+												if (part.functionCall) {
+													hasYieldedAssistantContent = true
 													const callId = `${part.functionCall.name}-${toolCallCounter}`
-													const args = JSON.stringify(part.functionCall.args)
-
 													yield {
 														type: "tool_call_partial",
 														index: toolCallCounter,
@@ -253,15 +280,61 @@ export class VertexHandler extends GeminiHandler implements SingleCompletionHand
 														name: part.functionCall.name,
 														arguments: undefined,
 													}
-
 													yield {
 														type: "tool_call_partial",
 														index: toolCallCounter,
 														id: callId,
 														name: undefined,
-														arguments: args,
+														arguments: JSON.stringify(part.functionCall.args),
 													}
+													toolCallCounter++
+													continue
+												}
 
+												// Treat reasoning blocks as content
+												// Note: 'thought' flag and 'thoughtSignature' can come in the same part or separate ones.
+												if (part.thought === true || part.role === "thought") {
+													if (part.text) {
+														hasYieldedAssistantContent = true
+														yield { type: "reasoning", text: part.text }
+													} else {
+														// Structural reasoning parts mark as having content
+														hasYieldedAssistantContent = true
+														// Yield an empty reasoning block to ensure the UI sees activity
+														yield { type: "reasoning", text: "" }
+													}
+													continue
+												}
+
+												if (part.text) {
+													hasYieldedAssistantContent = true
+													const parts = part.text.split(
+														/(<think(?:\s.*?)?>|<\/think(?:\s.*?)?>)/gi,
+													)
+													for (const p of parts) {
+														const lowerP = p.toLowerCase()
+														if (lowerP.startsWith("<think")) inThought = true
+														else if (lowerP.startsWith("</think")) inThought = false
+														else if (p.length > 0)
+															yield { type: inThought ? "reasoning" : "text", text: p }
+													}
+												} else if (part.functionCall) {
+													hasYieldedAssistantContent = true
+													const callId = `${part.functionCall.name}-${toolCallCounter}`
+													yield {
+														type: "tool_call_partial",
+														index: toolCallCounter,
+														id: callId,
+														name: part.functionCall.name,
+														arguments: undefined,
+													}
+													yield {
+														type: "tool_call_partial",
+														index: toolCallCounter,
+														id: callId,
+														name: undefined,
+														arguments: JSON.stringify(part.functionCall.args),
+													}
 													toolCallCounter++
 												}
 											}
@@ -277,20 +350,16 @@ export class VertexHandler extends GeminiHandler implements SingleCompletionHand
 											type: "usage",
 											inputTokens,
 											outputTokens,
-											totalCost: this.calculateCost({
-												info,
-												inputTokens,
-												outputTokens,
-											}),
+											totalCost: this.calculateCost({ info, inputTokens, outputTokens }),
 										}
 									}
 								} catch (e) {
+									if (e instanceof Error && e.message.startsWith("Vertex Express Finish Reason"))
+										throw e
 									console.error("JSON Parse Error:", e)
 								}
-
-								// Remove processed data from buffer
 								buffer = buffer.substring(cursor + 1)
-								cursor = -1 // will be incremented to 0
+								cursor = -1
 								startIndex = -1
 							}
 						}
@@ -299,11 +368,14 @@ export class VertexHandler extends GeminiHandler implements SingleCompletionHand
 				}
 			}
 
+			if (!hasYieldedAssistantContent) {
+				console.warn("Vertex Express: No assistant content yielded in stream, yielding placeholder")
+				yield { type: "text", text: " " }
+			}
+
 			if (pendingGroundingMetadata) {
 				const sources = this.extractGroundingSources(pendingGroundingMetadata)
-				if (sources.length > 0) {
-					yield { type: "grounding", sources }
-				}
+				if (sources.length > 0) yield { type: "grounding", sources }
 			}
 		} finally {
 			reader.releaseLock()
@@ -312,7 +384,7 @@ export class VertexHandler extends GeminiHandler implements SingleCompletionHand
 
 	override getModel() {
 		const modelId = this.options.apiModelId
-		let id = modelId && modelId in vertexModels ? (modelId as VertexModelId) : vertexDefaultModelId
+		const id = modelId && modelId in vertexModels ? (modelId as VertexModelId) : vertexDefaultModelId
 		let info: ModelInfo = vertexModels[id]
 		const params = getModelParams({
 			format: "gemini",
@@ -322,39 +394,23 @@ export class VertexHandler extends GeminiHandler implements SingleCompletionHand
 			defaultTemperature: info.defaultTemperature ?? 1,
 		})
 
-		// Vertex Gemini models perform better with the edit tool instead of apply_diff.
 		info = {
 			...info,
 			excludedTools: [...new Set([...(info.excludedTools || []), "apply_diff"])],
 			includedTools: [...new Set([...(info.includedTools || []), "edit"])],
 		}
 
-		// The `:thinking` suffix indicates that the model is a "Hybrid"
-		// reasoning model and that reasoning is required to be enabled.
-		// The actual model ID honored by Gemini's API does not have this
-		// suffix.
 		return { id: id.endsWith(":thinking") ? id.replace(":thinking", "") : id, info, ...params }
 	}
 
 	protected override extractGroundingSources(groundingMetadata: any): GroundingSource[] {
 		const chunks = groundingMetadata?.groundingChunks
-
-		if (!chunks) {
-			return []
-		}
-
+		if (!chunks) return []
 		return chunks
 			.map((chunk: any): GroundingSource | null => {
 				const uri = chunk.web?.uri
 				const title = chunk.web?.title || uri || "Unknown Source"
-
-				if (uri) {
-					return {
-						title,
-						url: uri,
-					}
-				}
-				return null
+				return uri ? { title, url: uri } : null
 			})
 			.filter((source: any): source is GroundingSource => source !== null)
 	}
@@ -367,76 +423,59 @@ export class VertexHandler extends GeminiHandler implements SingleCompletionHand
 		return this.lastThoughtSignature
 	}
 
-	/**
-	 * Removes unsupported JSON schema keywords from the tool definition.
-	 * Vertex AI's Function Calling API is strict and rejects requests containing
-	 * standard JSON schema fields like "additionalProperties", "default",
-	 * and validation keywords (min/max/pattern) that are not supported in its Protobuf definition.
-	 */
 	private cleanSchema(schema: any): any {
 		if (!schema || typeof schema !== "object") return schema
-
-		if (Array.isArray(schema)) {
-			return schema.map((item) => this.cleanSchema(item))
-		}
-
+		if (Array.isArray(schema)) return schema.map((item) => this.cleanSchema(item))
 		const out: any = {}
 		for (const key in schema) {
 			if (key === "properties") {
 				out[key] = {}
-				for (const propertyKey in schema[key]) {
+				for (const propertyKey in schema[key])
 					out[key][propertyKey] = this.cleanSchema(schema[key][propertyKey])
-				}
 				continue
 			}
-
 			if (
-				key === "exclusiveMinimum" ||
-				key === "exclusiveMaximum" ||
-				key === "minimum" ||
-				key === "maximum" ||
-				key === "multipleOf" ||
-				key === "minLength" ||
-				key === "maxLength" ||
-				key === "minItems" ||
-				key === "maxItems" ||
-				key === "uniqueItems" ||
-				key === "pattern" ||
-				key === "const" ||
-				key === "additionalProperties" ||
-				key === "title" ||
-				key === "default" ||
-				key === "examples" ||
-				key === "$schema" ||
-				key === "$id" ||
-				key === "unevaluatedProperties" ||
-				key === "propertyNames" ||
-				key === "minProperties" ||
-				key === "maxProperties" ||
-				key === "allOf" ||
-				key === "oneOf" ||
-				key === "anyOf" ||
-				key === "not" ||
-				key === "if" ||
-				key === "then" ||
-				key === "else" ||
-				key === "dependentRequired" ||
-				key === "dependentSchemas"
-			) {
+				[
+					"exclusiveMinimum",
+					"exclusiveMaximum",
+					"minimum",
+					"maximum",
+					"multipleOf",
+					"minLength",
+					"maxLength",
+					"minItems",
+					"maxItems",
+					"uniqueItems",
+					"pattern",
+					"const",
+					"additionalProperties",
+					"title",
+					"default",
+					"examples",
+					"$schema",
+					"$id",
+					"unevaluatedProperties",
+					"propertyNames",
+					"minProperties",
+					"maxProperties",
+					"allOf",
+					"oneOf",
+					"anyOf",
+					"not",
+					"if",
+					"then",
+					"else",
+					"dependentRequired",
+					"dependentSchemas",
+				].includes(key)
+			)
 				continue
-			}
-
 			if (key === "type" && Array.isArray(schema[key])) {
-				// Vertex AI doesn't support array types (e.g. ["string", "null"])
-				// Use the first non-null type
 				const firstType = schema[key].find((t: string) => t !== "null")
 				out[key] = firstType || schema[key][0]
-				if (schema[key].includes("null")) {
-					out["nullable"] = true
-				}
+				if (schema[key].includes("null")) out["nullable"] = true
 				continue
 			}
-
 			out[key] = this.cleanSchema(schema[key])
 		}
 		return out

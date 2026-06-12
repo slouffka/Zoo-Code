@@ -1,6 +1,6 @@
-import { describe, it, expect, beforeEach, vi, afterEach } from "vitest"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import type { ApiHandlerOptions } from "../../../shared/api"
 import { VertexHandler } from "../vertex"
-import { ApiHandlerOptions } from "../../../shared/api"
 
 // Mock i18next
 vi.mock("i18next", () => ({
@@ -45,19 +45,24 @@ describe("VertexHandler Express Mode", () => {
 		await generator.next()
 
 		expect(fetchMock).toHaveBeenCalledWith(
-			expect.stringContaining("streamGenerateContent?key=test-api-key"),
+			expect.stringContaining("/v1/publishers/google/models/"),
 			expect.objectContaining({
 				method: "POST",
 			}),
 		)
 
 		const callArgs = JSON.parse(fetchMock.mock.calls[0][1].body)
-		expect(callArgs.generationConfig.temperature).toBe(1)
-		expect(callArgs.generationConfig.maxOutputTokens).toBe(8192)
+		expect(callArgs.generation_config.temperature).toBe(1)
+		expect(callArgs.generation_config.max_output_tokens).toBe(8192)
+		expect(callArgs.system_instruction).toBeDefined()
 	})
 
 	it("should use user provided configuration", async () => {
-		const customOptions = { ...options, modelTemperature: 0.5, modelMaxTokens: 1000 }
+		const customOptions = {
+			...options,
+			modelTemperature: 0.5,
+			modelMaxTokens: 1000,
+		}
 		handler = new VertexHandler(customOptions)
 
 		const stream = new ReadableStream({
@@ -76,8 +81,8 @@ describe("VertexHandler Express Mode", () => {
 		await generator.next()
 
 		const callArgs = JSON.parse(fetchMock.mock.calls[0][1].body)
-		expect(callArgs.generationConfig.temperature).toBe(0.5)
-		expect(callArgs.generationConfig.maxOutputTokens).toBe(1000)
+		expect(callArgs.generation_config.temperature).toBe(0.5)
+		expect(callArgs.generation_config.max_output_tokens).toBe(1000)
 	})
 
 	it("should correctly format complex messages using convertAnthropicMessageToGemini", async () => {
@@ -99,7 +104,12 @@ describe("VertexHandler Express Mode", () => {
 				role: "assistant",
 				content: [
 					{ type: "text", text: "I will run this." },
-					{ type: "tool_use", id: "call_1", name: "execute_command", input: { command: "ls" } },
+					{
+						type: "tool_use",
+						id: "call_1",
+						name: "execute_command",
+						input: { command: "ls" },
+					},
 				],
 			},
 		]
@@ -149,7 +159,12 @@ describe("VertexHandler Express Mode", () => {
 		expect(messages).toEqual([
 			{ type: "text", text: "Hello" },
 			{ type: "text", text: " world" },
-			{ type: "usage", inputTokens: 10, outputTokens: 5, totalCost: expect.any(Number) },
+			{
+				type: "usage",
+				inputTokens: 10,
+				outputTokens: 5,
+				totalCost: expect.any(Number),
+			},
 		])
 	})
 
@@ -283,9 +298,9 @@ describe("VertexHandler Express Mode", () => {
 		const sentTools = callArgs.tools
 
 		expect(sentTools).toHaveLength(1)
-		expect(sentTools[0].functionDeclarations).toHaveLength(1)
+		expect(sentTools[0].function_declarations).toHaveLength(1)
 
-		const decl = sentTools[0].functionDeclarations[0]
+		const decl = sentTools[0].function_declarations[0]
 		expect(decl.name).toBe("test_tool")
 		expect(decl.description).toBe("A test tool")
 
@@ -328,11 +343,24 @@ describe("VertexHandler Express Mode", () => {
 		const messages = [
 			{
 				role: "assistant",
-				content: [{ type: "tool_use", id: "call_1", name: "read_file", input: { path: "test.ts" } }],
+				content: [
+					{
+						type: "tool_use",
+						id: "call_1",
+						name: "read_file",
+						input: { path: "test.ts" },
+					},
+				],
 			},
 			{
 				role: "user",
-				content: [{ type: "tool_result", tool_use_id: "call_1", content: "file content" }],
+				content: [
+					{
+						type: "tool_result",
+						tool_use_id: "call_1",
+						content: "file content",
+					},
+				],
 			},
 		]
 
@@ -347,11 +375,11 @@ describe("VertexHandler Express Mode", () => {
 		expect(lastMessage.role).toBe("function")
 		const functionResponsePart = lastMessage.parts[0]
 
-		expect(functionResponsePart).toHaveProperty("functionResponse")
-		expect(functionResponsePart.functionResponse).toHaveProperty("name", "read_file")
-		expect(functionResponsePart.functionResponse.response).toHaveProperty("content", "file content")
+		expect(functionResponsePart).toHaveProperty("function_response")
+		expect(functionResponsePart.function_response).toHaveProperty("name", "read_file")
+		expect(functionResponsePart.function_response.response).toHaveProperty("content", "file content")
 		// The key fix: confirm 'name' is NOT in the inner response object
-		expect(functionResponsePart.functionResponse.response).not.toHaveProperty("name")
+		expect(functionResponsePart.function_response.response).not.toHaveProperty("name")
 	})
 
 	it("should set role to 'function' for messages with functionResponse", async () => {
@@ -369,7 +397,14 @@ describe("VertexHandler Express Mode", () => {
 		const messages = [
 			{
 				role: "assistant",
-				content: [{ type: "tool_use", id: "call_1", name: "read_file", input: { path: "test.ts" } }],
+				content: [
+					{
+						type: "tool_use",
+						id: "call_1",
+						name: "read_file",
+						input: { path: "test.ts" },
+					},
+				],
 			},
 			{
 				role: "user",
@@ -384,7 +419,7 @@ describe("VertexHandler Express Mode", () => {
 		const lastMessage = callArgs.contents[callArgs.contents.length - 1]
 
 		expect(lastMessage.role).toBe("function")
-		expect(lastMessage.parts[0]).toHaveProperty("functionResponse")
+		expect(lastMessage.parts[0]).toHaveProperty("function_response")
 	})
 
 	it("should correctly handle apply_patch tool schema", async () => {
@@ -431,9 +466,9 @@ describe("VertexHandler Express Mode", () => {
 		const sentTools = callArgs.tools
 
 		expect(sentTools).toHaveLength(1)
-		expect(sentTools[0].functionDeclarations).toHaveLength(1)
+		expect(sentTools[0].function_declarations).toHaveLength(1)
 
-		const decl = sentTools[0].functionDeclarations[0]
+		const decl = sentTools[0].function_declarations[0]
 		expect(decl.name).toBe("apply_patch")
 		expect(decl.description).toBe("Apply patches to files.")
 
@@ -492,7 +527,7 @@ describe("VertexHandler Express Mode", () => {
 
 		const callArgs = JSON.parse(fetchMock.mock.calls[0][1].body)
 		const sentTools = callArgs.tools
-		const decl = sentTools[0].functionDeclarations[0]
+		const decl = sentTools[0].function_declarations[0]
 		const params = decl.parameters
 
 		expect(params.properties).toHaveProperty("title")
@@ -500,7 +535,7 @@ describe("VertexHandler Express Mode", () => {
 		expect(params.required).toContain("title")
 	})
 
-	it("should add googleSearchRetrieval tool when enableGrounding is true and no tools are present", async () => {
+	it("should add google_search_retrieval tool when enableGrounding is true and no tools are present", async () => {
 		const stream = new ReadableStream({
 			start(controller) {
 				controller.close()
@@ -526,10 +561,10 @@ describe("VertexHandler Express Mode", () => {
 		const sentTools = callArgs.tools
 
 		expect(sentTools).toHaveLength(1)
-		expect(sentTools[0]).toHaveProperty("googleSearchRetrieval")
+		expect(sentTools[0]).toHaveProperty("google_search_retrieval")
 	})
 
-	it("should add urlContext tool when enableUrlContext is true and no tools are present", async () => {
+	it("should add url_context tool when enableUrlContext is true and no tools are present", async () => {
 		const stream = new ReadableStream({
 			start(controller) {
 				controller.close()
@@ -555,17 +590,17 @@ describe("VertexHandler Express Mode", () => {
 		const sentTools = callArgs.tools
 
 		expect(sentTools).toHaveLength(1)
-		expect(sentTools[0]).toHaveProperty("urlContext")
+		expect(sentTools[0]).toHaveProperty("url_context")
 	})
 
-	it("should capture responseId and thoughtSignature from chunks", async () => {
+	it("should capture responseId and thought_signature from chunks", async () => {
 		const chunks = [
 			JSON.stringify({
 				responseId: "test-response-id",
 				candidates: [
 					{
 						content: {
-							parts: [{ text: "Hello", thoughtSignature: "test-thought-sig" }],
+							parts: [{ text: "Hello", thought_signature: "test-thought-sig" }],
 						},
 					},
 				],
@@ -598,6 +633,158 @@ describe("VertexHandler Express Mode", () => {
 
 		expect(reasoningHandler.getResponseId()).toBe("test-response-id")
 		expect(reasoningHandler.getThoughtSignature()).toBe("test-thought-sig")
+	})
+
+	it("should not treat functionCall parts as reasoning even when they have thoughtSignature", async () => {
+		const chunks = [
+			JSON.stringify({
+				candidates: [
+					{
+						content: {
+							role: "model",
+							parts: [
+								{
+									functionCall: {
+										name: "update_todo_list",
+										args: { todos: "[ ] Task 1" },
+									},
+									thoughtSignature: "sig-123",
+								},
+							],
+						},
+					},
+				],
+				usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 5 },
+			}),
+		]
+
+		const encoder = new TextEncoder()
+		const stream = new ReadableStream({
+			start(controller) {
+				chunks.forEach((chunk) => controller.enqueue(encoder.encode(chunk)))
+				controller.close()
+			},
+		})
+
+		fetchMock.mockResolvedValue({
+			ok: true,
+			body: stream,
+			text: () => Promise.resolve(""),
+		})
+
+		const reasoningHandler = new VertexHandler({
+			...options,
+			apiModelId: "gemini-2.5-flash-preview-05-20:thinking",
+		})
+
+		const messages = []
+		for await (const msg of reasoningHandler.createMessage("sys", [])) {
+			messages.push(msg)
+		}
+
+		// Should yield tool_call_partial, NOT reasoning
+		const toolCallPartials = messages.filter((m) => m.type === "tool_call_partial")
+		const reasoningParts = messages.filter((m) => m.type === "reasoning")
+
+		expect(toolCallPartials.length).toBe(2) // name + arguments
+		expect(toolCallPartials[0]).toMatchObject({ type: "tool_call_partial", name: "update_todo_list" })
+		expect(reasoningParts.length).toBe(0)
+	})
+
+	it("should handle interleaved thinking with function calls", async () => {
+		const chunks = [
+			JSON.stringify({
+				candidates: [
+					{
+						content: {
+							role: "model",
+							parts: [{ thought: true, text: "I need to create a todo list." }],
+						},
+					},
+				],
+			}),
+			JSON.stringify({
+				candidates: [
+					{
+						content: {
+							role: "model",
+							parts: [
+								{
+									functionCall: {
+										name: "update_todo_list",
+										args: { todos: "[ ] Task 1" },
+									},
+									thoughtSignature: "sig-456",
+								},
+							],
+						},
+					},
+				],
+			}),
+			JSON.stringify({
+				candidates: [
+					{
+						content: {
+							role: "model",
+							parts: [{ thought: true, text: "Good, todo list created." }],
+						},
+					},
+				],
+			}),
+			JSON.stringify({
+				candidates: [
+					{
+						content: {
+							role: "model",
+							parts: [{ text: "Done!" }],
+						},
+						finishReason: "STOP",
+					},
+				],
+				usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 20 },
+			}),
+		]
+
+		const encoder = new TextEncoder()
+		const stream = new ReadableStream({
+			start(controller) {
+				chunks.forEach((chunk) => controller.enqueue(encoder.encode(chunk)))
+				controller.close()
+			},
+		})
+
+		fetchMock.mockResolvedValue({
+			ok: true,
+			body: stream,
+			text: () => Promise.resolve(""),
+		})
+
+		const reasoningHandler = new VertexHandler({
+			...options,
+			apiModelId: "gemini-2.5-flash-preview-05-20:thinking",
+		})
+
+		const messages = []
+		for await (const msg of reasoningHandler.createMessage("sys", [])) {
+			messages.push(msg)
+		}
+
+		const reasoningParts = messages.filter((m) => m.type === "reasoning")
+		const toolCallPartials = messages.filter((m) => m.type === "tool_call_partial")
+		const textParts = messages.filter((m) => m.type === "text")
+
+		// 2 reasoning blocks (from thought: true parts)
+		expect(reasoningParts.length).toBe(2)
+		expect(reasoningParts[0].text).toBe("I need to create a todo list.")
+		expect(reasoningParts[1].text).toBe("Good, todo list created.")
+
+		// 2 tool_call_partial (name + arguments for the function call)
+		expect(toolCallPartials.length).toBe(2)
+		expect(toolCallPartials[0]).toMatchObject({ name: "update_todo_list" })
+
+		// 1 text block
+		expect(textParts.length).toBe(1)
+		expect(textParts[0].text).toBe("Done!")
 	})
 
 	it("should yield grounding sources at the end of the stream", async () => {

@@ -593,14 +593,14 @@ describe("VertexHandler Express Mode", () => {
 		expect(sentTools[0]).toHaveProperty("url_context")
 	})
 
-	it("should capture responseId and thought_signature from chunks", async () => {
+	it("should capture responseId and thoughtSignature from chunks", async () => {
 		const chunks = [
 			JSON.stringify({
 				responseId: "test-response-id",
 				candidates: [
 					{
 						content: {
-							parts: [{ text: "Hello", thought_signature: "test-thought-sig" }],
+							parts: [{ text: "Hello", thoughtSignature: "test-thought-sig" }],
 						},
 					},
 				],

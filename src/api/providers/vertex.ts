@@ -107,10 +107,6 @@ export class VertexHandler extends GeminiHandler implements SingleCompletionHand
 				// Clean up functionResponse: Vertex AI rejects the inner 'name' field in the response object
 				if (content.parts) {
 					content.parts = content.parts.map((part: any) => {
-						if (part.thoughtSignature) {
-							const { thoughtSignature, ...rest } = part
-							return { ...rest, thought_signature: thoughtSignature }
-						}
 						if (part.functionResponse) {
 							const { functionResponse, ...rest } = part
 							if (functionResponse.response?.name) {
@@ -262,11 +258,11 @@ export class VertexHandler extends GeminiHandler implements SingleCompletionHand
 										if (candidate.content?.parts) {
 											for (const part of candidate.content.parts) {
 												if (
-													(part.thought_signature || part.thoughtSignature) &&
+													(part.thoughtSignature || part.thought_signature) &&
 													thinkingConfig
 												) {
 													this.lastThoughtSignature =
-														part.thought_signature || part.thoughtSignature
+														part.thoughtSignature || part.thought_signature
 												}
 
 												// Function calls should never be treated as reasoning, even if they carry a thoughtSignature

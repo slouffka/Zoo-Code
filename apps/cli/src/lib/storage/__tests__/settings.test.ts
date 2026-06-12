@@ -30,11 +30,16 @@ describe("Settings Storage", () => {
 	beforeEach(async () => {
 		// Clear test directory before each test
 		await fs.rm(actualTestConfigDir, { recursive: true, force: true })
+		vi.spyOn(console, "warn").mockImplementation(() => {})
 	})
 
 	afterAll(async () => {
 		// Clean up test directory
 		await fs.rm(actualTestConfigDir, { recursive: true, force: true })
+	})
+
+	afterEach(() => {
+		vi.restoreAllMocks()
 	})
 
 	describe("getSettingsPath", () => {
@@ -51,7 +56,7 @@ describe("Settings Storage", () => {
 
 		it("should load saved settings", async () => {
 			const settingsData = {
-				onboardingProviderChoice: OnboardingProviderChoice.Roo,
+				onboardingProviderChoice: OnboardingProviderChoice.Byok,
 				mode: "architect",
 				provider: "anthropic" as const,
 				model: "claude-sonnet-4-20250514",
@@ -138,7 +143,7 @@ describe("Settings Storage", () => {
 
 	describe("resetOnboarding", () => {
 		it("should reset onboarding provider choice", async () => {
-			await saveSettings({ onboardingProviderChoice: OnboardingProviderChoice.Roo })
+			await saveSettings({ onboardingProviderChoice: OnboardingProviderChoice.Byok })
 
 			await resetOnboarding()
 

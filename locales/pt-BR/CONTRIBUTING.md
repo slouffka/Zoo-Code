@@ -11,15 +11,17 @@
 </sub>
 </div>
 
-# Contribuindo para o Roo Code
+# Contribuindo para o Zoo Code
 
-O Roo Code é um projeto impulsionado pela comunidade, e valorizamos profundamente cada contribuição. Para agilizar a colaboração, operamos com base em uma [abordagem de "primeiro a issue"](#abordagem-de-primeiro-a-issue), o que significa que todas as [Pull Requests (PRs)](#enviando-uma-pull-request) devem primeiro estar vinculadas a uma Issue do GitHub. Por favor, revise este guia com atenção.
+O Zoo Code é um projeto impulsionado pela comunidade, e valorizamos profundamente cada contribuição. Para agilizar a colaboração, operamos com base em uma [abordagem de "primeiro a issue"](#abordagem-de-primeiro-a-issue), o que significa que todas as [Pull Requests (PRs)](#enviando-uma-pull-request) devem primeiro estar vinculadas a uma Issue do GitHub. Por favor, revise este guia com atenção.
 
 ## Índice
 
 - [Antes de contribuir](#antes-de-contribuir)
 - [Encontrando e planejando sua contribuição](#encontrando-e-planejando-sua-contribuição)
 - [Processo de desenvolvimento e envio](#processo-de-desenvolvimento-e-envio)
+- [Expectativas de Pull Request](#expectativas-de-pull-request)
+- [Contribuições assistidas por IA](#contribuições-assistidas-por-ia)
 - [Legal](#legal)
 
 ## Antes de contribuir
@@ -52,10 +54,10 @@ Nosso roteiro guia a direção do projeto. Alinhe suas contribuições com estes
 
 Mencione o alinhamento com essas áreas em seus PRs.
 
-### 3. Junte-se à comunidade Roo Code
+### 3. Junte-se à comunidade do Zoo Code
 
-- **Principal:** Junte-se ao nosso [Discord](https://discord.gg/roocode) e envie uma DM para **Hannes Rudolph (`hrudolph`)**.
-- **Alternativa:** Contribuidores experientes могут se envolver diretamente através dos [Projetos do GitHub](https://github.com/orgs/RooCodeInc/projects/1).
+- **Discord:** Entre no nosso [Discord](https://discord.gg/VxfP4Vx3gX).
+- **Reddit:** Entre no nosso [Reddit](https://www.reddit.com/r/ZooCode/).
 
 ## Encontrando e planejando sua contribuição
 
@@ -69,26 +71,26 @@ Mencione o alinhamento com essas áreas em seus PRs.
 
 Todas as contribuições começam com uma Issue do GitHub usando nossos modelos simplificados.
 
-- **Verifique as issues existentes**: Pesquise nas [Issues do GitHub](https://github.com/RooCodeInc/Roo-Code/issues).
+- **Verifique as issues existentes**: Pesquise nas [Issues do GitHub](https://github.com/Zoo-Code-Org/Zoo-Code/issues).
 - **Crie uma issue** usando:
     - **Melhorias:** modelo "Solicitação de melhoria" (linguagem simples focada no benefício do usuário).
     - **Bugs:** modelo "Relatório de bug" (reprodução mínima + esperado vs. real + versão).
-- **Quer trabalhar nisso?** Comente "Reivindicando" na issue e envie uma DM para **Hannes Rudolph (`hrudolph`)** no [Discord](https://discord.gg/roocode) para ser atribuído. A atribuição será confirmada no tópico.
+- **Quer trabalhar nisso?** Comente "Reivindicando" na issue e envie uma DM para a equipe principal no [Discord](https://discord.gg/VxfP4Vx3gX) para ser atribuído. A atribuição será confirmada no tópico.
 - **Os PRs devem ser vinculados à issue.** PRs não vinculados podem ser fechados.
 
 ### Decidindo no que trabalhar
 
-- Verifique o [Projeto do GitHub](https://github.com/orgs/RooCodeInc/projects/1) para issues "Issue [Não atribuída]".
-- Para documentação, visite [Documentação do Roo Code](https://github.com/RooCodeInc/Roo-Code-Docs).
+- Confira a [página de GitHub Issues](https://github.com/Zoo-Code-Org/Zoo-Code/issues) para ver as issues.
+- Para documentação, visite [Documentação do Zoo Code](https://github.com/Zoo-Code-Org/Zoo-Code-Docs).
 
 ### Relatando bugs
 
 - Verifique primeiro os relatórios existentes.
-- Crie um novo bug usando o [modelo "Relatório de bug"](https://github.com/RooCodeInc/Roo-Code/issues/new/choose) com:
+- Crie um novo bug usando o [modelo "Relatório de bug"](https://github.com/Zoo-Code-Org/Zoo-Code/issues/new/choose) com:
     - Passos de reprodução claros e numerados
     - Resultado esperado vs. real
-    - Versão do Roo Code (obrigatório); provedor/modelo de IA, se relevante
-- **Problemas de segurança**: Relate em particular através de [avisos de segurança](https://github.com/RooCodeInc/Roo-Code/security/advisories/new).
+    - Versão do Zoo Code (obrigatório); provedor/modelo de IA, se relevante
+- **Problemas de segurança**: Relate em particular por meio de [avisos de segurança](https://github.com/Zoo-Code-Org/Zoo-Code/security/advisories/new).
 
 ## Processo de desenvolvimento e envio
 
@@ -97,7 +99,7 @@ Todas as contribuições começam com uma Issue do GitHub usando nossos modelos 
 1. **Fork e Clone:**
 
 ```
-git clone https://github.com/SEU_NOME_DE_USUARIO/Roo-Code.git
+git clone https://github.com/YOUR_USERNAME/Zoo-Code.git
 ```
 
 2. **Instale as dependências:**
@@ -126,7 +128,7 @@ pnpm install
 
 ### Política de Pull Request
 
-- Deve fazer referência a uma Issue do GitHub atribuída. Para ser atribuído: comente "Reivindicando" na issue e envie uma DM para **Hannes Rudolph (`hrudolph`)** no [Discord](https://discord.gg/roocode). A atribuição será confirmada no tópico.
+- Deve fazer referência a uma Issue do GitHub atribuída. Para ser atribuído: comente "Reivindicando" na issue e envie uma DM para a equipe principal no [Discord](https://discord.gg/VxfP4Vx3gX). A atribuição será confirmada no tópico.
 - PRs não vinculados podem ser fechados.
 - Os PRs devem passar nos testes de CI, estar alinhados com o roteiro e ter documentação clara.
 
@@ -136,6 +138,32 @@ pnpm install
 - **Revisão aprofundada semanal:** avaliação abrangente.
 - **Itere prontamente** com base no feedback.
 
+### Expectativas de Pull Request
+
+As Pull Requests devem ser revisáveis, testadas e manuteníveis. Antes de abrir uma PR, certifique-se de que:
+
+- A mudança é limitada a um issue, bug ou melhoria específica.
+- Você pode explicar o que a mudança faz e por que está correta.
+- Você testou a mudança localmente onde for prático.
+- Você está disposto a responder ao feedback da revisão e fazer alterações de acompanhamento razoáveis.
+- A PR não requer que os mantenedores reescrevam, redesenhem ou assumam substancialmente a propriedade da implementação antes de poder ser mesclada.
+
+Os mantenedores podem fechar PRs que estejam incompletas, muito amplas, inativas, não alinhadas com a direção do projeto ou que criem uma carga desproporcionada de revisão ou manutenção. Fechar uma PR não é um julgamento sobre o contribuidor; é uma decisão dos mantenedores de que a mudança não pode ser aceita em sua forma atual.
+
+### Contribuições assistidas por IA
+
+O uso de ferramentas de IA é permitido, mas os contribuidores permanecem totalmente responsáveis por suas submissões.
+
+Se você usar ferramentas de IA para ajudar a criar uma PR, você deve:
+
+- Revisar e entender cada mudança significativa.
+- Ser capaz de explicar a implementação e as compensações em suas próprias palavras.
+- Testar a mudança você mesmo. Se os testes não forem práticos no seu ambiente, explique o motivo na descrição da PR e descreva como os revisores podem verificar a mudança.
+- Verificar se o código gerado é correto, necessário e compatível com a licença do projeto.
+- Considere divulgar a assistência de IA na descrição da PR quando ela tiver influenciado materialmente o código, testes ou design — isso ajuda os revisores a fornecer um feedback melhor.
+
+Por favor, não envie mudanças geradas por IA que você não entenda ou que não possa manter durante a revisão. Os mantenedores podem fechar PRs que pareçam substancialmente assistidas por IA mas que careçam de verificação humana, justificativa clara ou acompanhamento da revisão.
+
 ## Legal
 
-Ao contribuir, você concorda que suas contribuições serão licenciadas sob a Licença Apache 2.0, consistente com o licenciamento do Roo Code.
+Ao contribuir, você concorda que suas contribuições serão licenciadas sob a Licença Apache 2.0, consistente com o licenciamento do Zoo Code.

@@ -11,15 +11,17 @@
 </sub>
 </div>
 
-# Contribuir a Roo Code
+# Contribuir a Zoo Code
 
-Roo Code és un projecte impulsat per la comunitat i valorem profundament cada contribució. Per agilitzar la col·laboració, operem sobre una base de [primer la incidència](#enfocament-de-primera-incidència), la qual cosa significa que totes les [sol·licituds d'extracció (PR)](#enviament-duna-sollicitud-dextracció) primer han d'estar enllaçades a una incidència de GitHub. Si us plau, reviseu aquesta guia amb atenció.
+Zoo Code és un projecte impulsat per la comunitat i valorem profundament cada contribució. Per agilitzar la col·laboració, operem sobre una base de [primer la incidència](#enfocament-de-primera-incidència), la qual cosa significa que totes les [sol·licituds d'extracció (PR)](#enviament-duna-sollicitud-dextracció) primer han d'estar enllaçades a una incidència de GitHub. Si us plau, reviseu aquesta guia amb atenció.
 
 ## Taula de continguts
 
 - [Abans de contribuir](#abans-de-contribuir)
 - [Trobar i planificar la vostra contribució](#trobar-i-planificar-la-vostra-contribució)
 - [Procés de desenvolupament i submissió](#procés-de-desenvolupament-i-submissió)
+- [Expectatives de les sol·licituds d'extracció](#expectatives-de-les-sollicituds-dextracció)
+- [Contribucions amb assistència d'IA](#contribucions-amb-assistència-dia)
 - [Legal](#legal)
 
 ## Abans de contribuir
@@ -52,10 +54,10 @@ El nostre full de ruta guia la direcció del projecte. Alineeu les vostres contr
 
 Mencioneu l'alineació amb aquestes àrees a les vostres sol·licituds d'extracció.
 
-### 3. Uniu-vos a la comunitat de Roo Code
+### 3. Uneix-te a la comunitat de Zoo Code
 
-- **Principal:** Uniu-vos al nostre [Discord](https://discord.gg/roocode) i envieu un missatge directe a **Hannes Rudolph (`hrudolph`)**.
-- **Alternativa:** Els col·laboradors experimentats poden participar directament a través de [Projectes de GitHub](https://github.com/orgs/RooCodeInc/projects/1).
+- **Discord:** Uneix-te al nostre [Discord](https://discord.gg/VxfP4Vx3gX).
+- **Reddit:** Uneix-te al nostre [Reddit](https://www.reddit.com/r/ZooCode/).
 
 ## Trobar i planificar la vostra contribució
 
@@ -69,26 +71,26 @@ Mencioneu l'alineació amb aquestes àrees a les vostres sol·licituds d'extracc
 
 Totes les contribucions comencen amb una incidència de GitHub utilitzant les nostres plantilles bàsiques.
 
-- **Comproveu les incidències existents**: cerqueu a [Incidències de GitHub](https://github.com/RooCodeInc/Roo-Code/issues).
+- **Comproveu les incidències existents**: cerqueu a [Incidències de GitHub](https://github.com/Zoo-Code-Org/Zoo-Code/issues).
 - **Creeu una incidència** utilitzant:
     - **Millores:** plantilla "Sol·licitud de millora" (llenguatge senzill centrat en el benefici per a l'usuari).
     - **Errors:** plantilla "Informe d'error" (reproducció mínima + esperat vs real + versió).
-- **Voleu treballar-hi?** Comenteu "Reclamant" a la incidència i envieu un missatge directe a **Hannes Rudolph (`hrudolph`)** a [Discord](https://discord.gg/roocode) per ser assignat. L'assignació es confirmarà al fil.
+- **Voleu treballar-hi?** Comenteu "Reclamant" a la incidència i envieu un missatge directe a l'equip principal a [Discord](https://discord.gg/VxfP4Vx3gX) per ser assignat. L'assignació es confirmarà al fil.
 - **Les sol·licituds d'extracció han d'enllaçar a la incidència.** Les sol·licituds d'extracció no enllaçades es poden tancar.
 
 ### Decidir en què treballar
 
-- Consulteu el [Projecte de GitHub](https://github.com/orgs/RooCodeInc/projects/1) per a incidències "Incidència [No assignada]".
-- Per a documents, visiteu [Documents de Roo Code](https://github.com/RooCodeInc/Roo-Code-Docs).
+- Consulta la [pàgina de GitHub Issues](https://github.com/Zoo-Code-Org/Zoo-Code/issues) per veure les issues.
+- Per a documents, visiteu [Documents de Zoo Code](https://github.com/Zoo-Code-Org/Zoo-Code-Docs).
 
 ### Informar d'errors
 
 - Comproveu primer si hi ha informes existents.
-- Creeu un error nou utilitzant la [plantilla "Informe d'error"](https://github.com/RooCodeInc/Roo-Code/issues/new/choose) amb:
+- Creeu un error nou utilitzant la [plantilla "Informe d'error"](https://github.com/Zoo-Code-Org/Zoo-Code/issues/new/choose) amb:
     - Passos de reproducció clars i numerats
     - Resultat esperat vs real
-    - Versió de Roo Code (obligatori); proveïdor/model d'API si és rellevant
-- **Problemes de seguretat**: informeu de manera privada a través d' [avisos de seguretat](https://github.com/RooCodeInc/Roo-Code/security/advisories/new).
+    - Versió de Zoo Code (obligatori); proveïdor/model d'API si és rellevant
+- **Problemes de seguretat**: informeu de manera privada a través d'[avisos de seguretat](https://github.com/Zoo-Code-Org/Zoo-Code/security/advisories/new).
 
 ## Procés de desenvolupament i submissió
 
@@ -97,7 +99,7 @@ Totes les contribucions comencen amb una incidència de GitHub utilitzant les no
 1. **Bifurcació i clonació:**
 
 ```
-git clone https://github.com/EL_TEU_NOM_USUARI/Roo-Code.git
+git clone https://github.com/YOUR_USERNAME/Zoo-Code.git
 ```
 
 2. **Instal·leu les dependències:**
@@ -126,7 +128,7 @@ pnpm install
 
 ### Política de sol·licitud d'extracció
 
-- Ha de fer referència a una incidència de GitHub assignada. Per ser assignat: comenteu "Reclamant" a la incidència i envieu un missatge directe a **Hannes Rudolph (`hrudolph`)** a [Discord](https://discord.gg/roocode). L'assignació es confirmarà al fil.
+- Ha de fer referència a una incidència de GitHub assignada. Per ser assignat: comenteu "Reclamant" a la incidència i envieu un missatge directe a l'equip principal a [Discord](https://discord.gg/VxfP4Vx3gX). L'assignació es confirmarà al fil.
 - Les sol·licituds d'extracció no enllaçades es poden tancar.
 - Les sol·licituds d'extracció han de passar les proves de CI, alinear-se amb el full de ruta i tenir una documentació clara.
 
@@ -136,6 +138,32 @@ pnpm install
 - **Revisió setmanal en profunditat:** avaluació completa.
 - **Itereu ràpidament** en funció dels comentaris.
 
+### Expectatives de les sol·licituds d'extracció
+
+Les sol·licituds d'extracció han de ser revisables, provades i mantenibles. Abans d'obrir una PR, assegureu-vos que:
+
+- El canvi s'adapta a un problema, error o millora específics.
+- Podeu explicar què fa el canvi i per què és correcte.
+- Heu provat el canvi localment on sigui pràctic.
+- Esteu disposats a respondre als comentaris de la revisió i fer canvis raonables de seguiment.
+- La PR no requereix que els mantenidors reescriguin, redissenyin o assumeixin la propietat substancial de la implementació abans de poder fusionar-la.
+
+Els mantenidors poden tancar les PR que estiguin incompletes, siguin massa àmplies, inactives, no estiguin alineades amb la direcció del projecte o que creïn una càrrega desproporcionada de revisió o manteniment. Tancar una PR no és un judici sobre el col·laborador; és una decisió dels mantenidors que el canvi no pot ser acceptat en la seva forma actual.
+
+### Contribucions amb assistència d'IA
+
+L'ús d'eines d'IA és permès, però els col·laboradors continuen sent completament responsables de les seves aportacions.
+
+Si utiliseu eines d'IA per ajudar a crear una PR, heu de:
+
+- Revisar i comprendre cada canvi significatiu.
+- Ser capaços d'explicar la implementació i els compromisos amb les vostres pròpies paraules.
+- Provar el canvi vosaltres mateixos. Si les proves no són pràctiques en el vostre entorn, expliqueu per què a la descripció de la PR i descriviu com els revisors poden verificar el canvi.
+- Verificar que el codi generat és correcte, necessari i compatible amb la llicència del projecte.
+- Considereu revelar l'assistència d'IA a la descripció de la PR quan hagi influït materialment en el codi, les proves o el disseny — això ajuda els revisors a donar millors comentaris.
+
+Si us plau, no envieu canvis generats per IA que no enteneu o que no podeu mantenir durant la revisió. Els mantenidors poden tancar les PR que semblin substancialment assistides per IA però que manquin de verificació humana, raonament clar o seguiment de la revisió.
+
 ## Legal
 
-En contribuir, accepteu que les vostres contribucions es llicenciaran sota la llicència Apache 2.0, d'acord amb la llicència de Roo Code.
+En contribuir, accepteu que les vostres contribucions es llicenciaran sota la llicència Apache 2.0, d'acord amb la llicència de Zoo Code.

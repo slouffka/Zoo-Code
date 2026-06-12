@@ -66,6 +66,12 @@ export interface RooCodeAPI extends EventEmitter<RooCodeAPIEvents> {
 	 */
 	pressSecondaryButton(): Promise<void>
 	/**
+	 * Programmatically approves the current pending ask on the active task.
+	 * Equivalent to the user clicking "Yes" for tool/command approvals, or
+	 * confirming a completion result. No-ops if no task is active.
+	 */
+	approveCurrentAsk(): Promise<void>
+	/**
 	 * Returns true if the API is ready to use.
 	 */
 	isReady(): boolean
@@ -133,6 +139,13 @@ export interface RooCodeAPI extends EventEmitter<RooCodeAPIEvents> {
 	 * @throws Error if the profile does not exist
 	 */
 	setActiveProfile(name: string): Promise<string | undefined>
+	/**
+	 * Activates a process-wide VS Code terminal profile override for Zoo Code
+	 * commands. This is intended for trusted extension integrations.
+	 * Passing undefined restores the VS Code default profile behavior and
+	 * closes idle terminals so the next command starts fresh.
+	 */
+	setTerminalProfile(name: string | undefined): void
 }
 
 export interface RooCodeIpcServer extends EventEmitter<IpcServerEvents> {

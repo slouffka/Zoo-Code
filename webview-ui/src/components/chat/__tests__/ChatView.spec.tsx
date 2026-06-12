@@ -6,8 +6,17 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 
 import { ExtensionStateContextProvider } from "@src/context/ExtensionStateContext"
 import { vscode } from "@src/utils/vscode"
+import type { SuggestionItem } from "@roo-code/types"
 
 import ChatView, { ChatViewProps } from "../ChatView"
+
+const mockVirtuosoState = vi.hoisted(() => ({
+	lastConfig: null as {
+		computeItemKey?: (index: number, item: ClineMessage) => React.Key
+		defaultItemHeight?: number
+		increaseViewportBy?: number | { top?: number; bottom?: number }
+	} | null,
+}))
 
 // Define minimal types needed for testing
 interface ClineMessage {
@@ -46,7 +55,33 @@ vi.mock("use-sound", () => ({
 
 // Mock components that use ESM dependencies
 vi.mock("../ChatRow", () => ({
-	default: function MockChatRow({ message }: { message: ClineMessage }) {
+	default: function MockChatRow({
+		message,
+		onSuggestionClick,
+	}: {
+		message: ClineMessage
+		onSuggestionClick?: (suggestion: SuggestionItem, event?: React.MouseEvent) => void
+	}) {
+		if (message.type === "ask" && message.ask === "followup" && message.text) {
+			try {
+				const followUp = JSON.parse(message.text) as { suggest?: SuggestionItem[] }
+				return (
+					<div data-testid="chat-row">
+						{followUp.suggest?.map((suggestion) => (
+							<button
+								key={suggestion.answer}
+								type="button"
+								onClick={(event) => onSuggestionClick?.(suggestion, event)}>
+								{suggestion.answer}
+							</button>
+						))}
+					</div>
+				)
+			} catch {
+				// Fall through to the generic row renderer.
+			}
+		}
+
 		return <div data-testid="chat-row">{JSON.stringify(message)}</div>
 	},
 }))
@@ -61,14 +96,26 @@ vi.mock("react-virtuoso", () => ({
 	Virtuoso: function MockVirtuoso({
 		data,
 		itemContent,
+		computeItemKey,
+		defaultItemHeight,
+		increaseViewportBy,
 	}: {
 		data: ClineMessage[]
 		itemContent: (index: number, item: ClineMessage) => React.ReactNode
+		computeItemKey?: (index: number, item: ClineMessage) => React.Key
+		defaultItemHeight?: number
+		increaseViewportBy?: number | { top?: number; bottom?: number }
 	}) {
+		mockVirtuosoState.lastConfig = {
+			computeItemKey,
+			defaultItemHeight,
+			increaseViewportBy,
+		}
+
 		return (
 			<div data-testid="virtuoso-item-list">
 				{data.map((item, index) => (
-					<div key={item.ts} data-testid={`virtuoso-item-${index}`}>
+					<div key={computeItemKey?.(index, item) ?? item.ts} data-testid={`virtuoso-item-${index}`}>
 						{itemContent(index, item)}
 					</div>
 				))}
@@ -95,13 +142,6 @@ vi.mock("../Announcement", () => ({
 			React.createElement("div", null, "What's New"),
 			React.createElement("button", { onClick: hideAnnouncement }, "Close"),
 		)
-	},
-}))
-
-// Mock DismissibleUpsell component
-vi.mock("@/components/common/DismissibleUpsell", () => ({
-	default: function MockDismissibleUpsell({ children }: { children: React.ReactNode }) {
-		return <div data-testid="dismissible-upsell">{children}</div>
 	},
 }))
 
@@ -461,6 +501,45 @@ describe("ChatView - Sound Playing Tests", () => {
 	})
 })
 
+describe("ChatView - Virtualization Configuration", () => {
+	beforeEach(() => {
+		vi.clearAllMocks()
+		mockVirtuosoState.lastConfig = null
+	})
+
+	it("keeps the off-screen render buffer tight for chat rows", async () => {
+		renderChatView()
+
+		const taskTs = Date.now() - 100
+		const rowTs = Date.now()
+
+		mockPostMessage({
+			clineMessages: [
+				{
+					type: "say",
+					say: "task",
+					ts: taskTs,
+					text: "Initial task",
+				},
+				{
+					type: "say",
+					say: "text",
+					ts: rowTs,
+					text: "Visible row",
+				},
+			],
+		})
+
+		await waitFor(() => {
+			expect(mockVirtuosoState.lastConfig).not.toBeNull()
+		})
+
+		expect(mockVirtuosoState.lastConfig?.defaultItemHeight).toBe(180)
+		expect(mockVirtuosoState.lastConfig?.increaseViewportBy).toEqual({ top: 600, bottom: 800 })
+		expect(mockVirtuosoState.lastConfig?.computeItemKey?.(1, { type: "say", ts: rowTs })).toBe(`${rowTs}-1`)
+	})
+})
+
 describe("ChatView - Focus Grabbing Tests", () => {
 	beforeEach(() => vi.clearAllMocks())
 
@@ -670,50 +749,12 @@ describe("ChatView - Version Indicator Tests", () => {
 	})
 })
 
-describe("ChatView - DismissibleUpsell Display Tests", () => {
+describe("ChatView - Welcome Screen Display Tests", () => {
 	beforeEach(() => vi.clearAllMocks())
 
-	it("does not show DismissibleUpsell when user is authenticated to Cloud", () => {
-		const { queryByTestId } = renderChatView()
+	it("shows RooTips on the welcome screen regardless of task history or cloud auth", async () => {
+		const { getByTestId, queryByTestId } = renderChatView()
 
-		// Hydrate state with user authenticated to cloud
-		mockPostMessage({
-			cloudIsAuthenticated: true,
-			taskHistory: [
-				{ id: "1", ts: Date.now() - 3000 },
-				{ id: "2", ts: Date.now() - 2000 },
-				{ id: "3", ts: Date.now() - 1000 },
-				{ id: "4", ts: Date.now() },
-			],
-			clineMessages: [], // No active task
-		})
-
-		// Should not show DismissibleUpsell when authenticated
-		expect(queryByTestId("dismissible-upsell")).not.toBeInTheDocument()
-	})
-
-	it("does not show DismissibleUpsell when user has only run 3 tasks in their history", () => {
-		const { queryByTestId } = renderChatView()
-
-		// Hydrate state with user not authenticated but only 3 tasks
-		mockPostMessage({
-			cloudIsAuthenticated: false,
-			taskHistory: [
-				{ id: "1", ts: Date.now() - 2000 },
-				{ id: "2", ts: Date.now() - 1000 },
-				{ id: "3", ts: Date.now() },
-			],
-			clineMessages: [], // No active task
-		})
-
-		// Should not show DismissibleUpsell with less than 4 tasks
-		expect(queryByTestId("dismissible-upsell")).not.toBeInTheDocument()
-	})
-
-	it("shows DismissibleUpsell when user is not authenticated and has run 6 or more tasks", async () => {
-		const { getByTestId } = renderChatView()
-
-		// Hydrate state with user not authenticated and 4 tasks
 		mockPostMessage({
 			cloudIsAuthenticated: false,
 			taskHistory: [
@@ -728,16 +769,15 @@ describe("ChatView - DismissibleUpsell Display Tests", () => {
 			clineMessages: [], // No active task
 		})
 
-		// Wait for component to render and show DismissibleUpsell
 		await waitFor(() => {
-			expect(getByTestId("dismissible-upsell")).toBeInTheDocument()
+			expect(getByTestId("roo-tips")).toBeInTheDocument()
 		})
+		expect(queryByTestId("dismissible-upsell")).not.toBeInTheDocument()
 	})
 
-	it("does not show DismissibleUpsell when there is an active task (regardless of auth status)", async () => {
+	it("does not show welcome content when there is an active task", async () => {
 		const { queryByTestId } = renderChatView()
 
-		// Hydrate state with active task
 		mockPostMessage({
 			cloudIsAuthenticated: false,
 			taskHistory: [
@@ -756,54 +796,11 @@ describe("ChatView - DismissibleUpsell Display Tests", () => {
 			],
 		})
 
-		// Wait for component to render with active task
 		await waitFor(() => {
-			// Should not show DismissibleUpsell during active task
 			expect(queryByTestId("dismissible-upsell")).not.toBeInTheDocument()
-			// Should not show RooTips either since the entire welcome screen is hidden during active tasks
 			expect(queryByTestId("roo-tips")).not.toBeInTheDocument()
-			// Should not show RooHero either since the entire welcome screen is hidden during active tasks
 			expect(queryByTestId("roo-hero")).not.toBeInTheDocument()
 		})
-	})
-
-	it("shows RooTips when user is authenticated (instead of DismissibleUpsell)", () => {
-		const { queryByTestId, getByTestId } = renderChatView()
-
-		// Hydrate state with user authenticated to cloud
-		mockPostMessage({
-			cloudIsAuthenticated: true,
-			taskHistory: [
-				{ id: "1", ts: Date.now() - 3000 },
-				{ id: "2", ts: Date.now() - 2000 },
-				{ id: "3", ts: Date.now() - 1000 },
-				{ id: "4", ts: Date.now() },
-			],
-			clineMessages: [], // No active task
-		})
-
-		// Should not show DismissibleUpsell but should show RooTips
-		expect(queryByTestId("dismissible-upsell")).not.toBeInTheDocument()
-		expect(getByTestId("roo-tips")).toBeInTheDocument()
-	})
-
-	it("shows RooTips when user has fewer than 6 tasks (instead of DismissibleUpsell)", () => {
-		const { queryByTestId, getByTestId } = renderChatView()
-
-		// Hydrate state with user not authenticated but fewer than 4 tasks
-		mockPostMessage({
-			cloudIsAuthenticated: false,
-			taskHistory: [
-				{ id: "1", ts: Date.now() - 2000 },
-				{ id: "2", ts: Date.now() - 1000 },
-				{ id: "3", ts: Date.now() },
-			],
-			clineMessages: [], // No active task
-		})
-
-		// Should not show DismissibleUpsell but should show RooTips
-		expect(queryByTestId("dismissible-upsell")).not.toBeInTheDocument()
-		expect(getByTestId("roo-tips")).toBeInTheDocument()
 	})
 })
 
@@ -1136,6 +1133,97 @@ describe("ChatView - Message Queueing Tests", () => {
 				type: "terminalOperation",
 			}),
 		)
+	})
+})
+
+describe("ChatView - Follow-up Suggestions", () => {
+	beforeEach(() => {
+		vi.clearAllMocks()
+		vi.mocked(vscode.postMessage).mockClear()
+	})
+
+	it("switches to a known mode from a malformed object mode suggestion", async () => {
+		const { getByRole } = renderChatView()
+
+		mockPostMessage({
+			mode: "ask",
+			customModes: [],
+			clineMessages: [
+				{
+					type: "say",
+					say: "task",
+					ts: Date.now() - 1000,
+					text: "Initial task",
+				},
+				{
+					type: "ask",
+					ask: "followup",
+					ts: Date.now(),
+					text: JSON.stringify({
+						question: "Switch mode?",
+						suggest: [{ answer: "Use code mode", mode: { mode_slug: "code" } }],
+					}),
+					partial: false,
+				},
+			],
+		})
+
+		const suggestion = await waitFor(() => getByRole("button", { name: "Use code mode" }))
+		vi.mocked(vscode.postMessage).mockClear()
+
+		fireEvent.click(suggestion)
+
+		await waitFor(() => {
+			expect(vscode.postMessage).toHaveBeenCalledWith({ type: "mode", text: "code" })
+		})
+		expect(vscode.postMessage).toHaveBeenCalledWith({
+			type: "askResponse",
+			askResponse: "messageResponse",
+			text: "Use code mode",
+			images: [],
+		})
+	})
+
+	it("does not switch modes for an unknown malformed object mode suggestion", async () => {
+		const { getByRole } = renderChatView()
+
+		mockPostMessage({
+			mode: "ask",
+			customModes: [],
+			clineMessages: [
+				{
+					type: "say",
+					say: "task",
+					ts: Date.now() - 1000,
+					text: "Initial task",
+				},
+				{
+					type: "ask",
+					ask: "followup",
+					ts: Date.now(),
+					text: JSON.stringify({
+						question: "Switch mode?",
+						suggest: [{ answer: "Use invalid mode", mode: { mode_slug: "not-a-mode" } }],
+					}),
+					partial: false,
+				},
+			],
+		})
+
+		const suggestion = await waitFor(() => getByRole("button", { name: "Use invalid mode" }))
+		vi.mocked(vscode.postMessage).mockClear()
+
+		fireEvent.click(suggestion)
+
+		await waitFor(() => {
+			expect(vscode.postMessage).toHaveBeenCalledWith({
+				type: "askResponse",
+				askResponse: "messageResponse",
+				text: "Use invalid mode",
+				images: [],
+			})
+		})
+		expect(vscode.postMessage).not.toHaveBeenCalledWith(expect.objectContaining({ type: "mode" }))
 	})
 })
 

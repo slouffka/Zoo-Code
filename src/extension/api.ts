@@ -21,10 +21,11 @@ import {
 	IpcMessageType,
 } from "@roo-code/types"
 import { IpcServer } from "@roo-code/ipc"
-import { CloudService } from "@roo-code/cloud"
 
 import { Package } from "../shared/package"
 import { ClineProvider } from "../core/webview/ClineProvider"
+import { Terminal } from "../integrations/terminal/Terminal"
+import { TerminalRegistry } from "../integrations/terminal/TerminalRegistry"
 import { openClineInNewTab } from "../activate/registerCommands"
 import { getCommands } from "../services/command/commands"
 import { getModels } from "../api/providers/fetchers/modelCache"
@@ -137,15 +138,7 @@ export class API extends EventEmitter<RooCodeEvents> implements RooCodeAPI {
 						break
 					case TaskCommandName.GetModels:
 						try {
-							const models = await getModels({
-								provider: "roo" as const,
-								baseUrl: process.env.ROO_CODE_PROVIDER_URL ?? "https://api.roocode.com/proxy",
-								apiKey: CloudService.hasInstance()
-									? CloudService.instance.authService?.getSessionToken()
-									: undefined,
-							})
-
-							sendResponse(RooCodeEventName.ModelsResponse, [models])
+							sendResponse(RooCodeEventName.ModelsResponse, [{}])
 						} catch (error) {
 							sendResponse(RooCodeEventName.ModelsResponse, [{}])
 						}
@@ -292,6 +285,10 @@ export class API extends EventEmitter<RooCodeEvents> implements RooCodeAPI {
 
 	public async pressSecondaryButton() {
 		await this.sidebarProvider.postMessageToWebview({ type: "invoke", invoke: "secondaryButtonClick" })
+	}
+
+	public async approveCurrentAsk() {
+		this.sidebarProvider.getCurrentTask()?.approveAsk()
 	}
 
 	public isReady() {
@@ -480,6 +477,15 @@ export class API extends EventEmitter<RooCodeEvents> implements RooCodeAPI {
 		await this.sidebarProvider.contextProxy.setValues(values)
 		await this.sidebarProvider.providerSettingsManager.saveConfig(values.currentApiConfigName || "default", values)
 		await this.sidebarProvider.postStateToWebview()
+	}
+
+	public setTerminalProfile(name: string | undefined): void {
+		const previousProfile = Terminal.getTerminalProfile()
+		Terminal.setTerminalProfile(name)
+
+		if (Terminal.getTerminalProfile() !== previousProfile) {
+			TerminalRegistry.closeIdleTerminals()
+		}
 	}
 
 	// Provider Profile Management

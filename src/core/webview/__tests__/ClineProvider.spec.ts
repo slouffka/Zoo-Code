@@ -1,5 +1,7 @@
 // pnpm --filter roo-cline test core/webview/__tests__/ClineProvider.spec.ts
 
+import * as path from "path"
+
 import Anthropic from "@anthropic-ai/sdk"
 import * as vscode from "vscode"
 import axios from "axios"
@@ -22,6 +24,7 @@ import { Task, TaskOptions } from "../../task/Task"
 import { safeWriteJson } from "../../../utils/safeWriteJson"
 
 import { ClineProvider } from "../ClineProvider"
+import { Terminal } from "../../../integrations/terminal/Terminal"
 import { MessageManager } from "../../message-manager"
 
 // Mock setup must come before imports.
@@ -50,6 +53,14 @@ vi.mock("axios", () => ({
 }))
 
 vi.mock("../../../utils/safeWriteJson")
+
+vi.mock("../../../utils/path", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("../../../utils/path")>()
+	return {
+		...actual,
+		getWorkspacePath: vi.fn().mockReturnValue(""),
+	}
+})
 
 vi.mock("../../../utils/storage", () => ({
 	getSettingsDirectoryPath: vi.fn().mockResolvedValue("/test/settings/path"),
@@ -115,6 +126,11 @@ vi.mock("vscode", () => ({
 	ExtensionContext: vi.fn(),
 	OutputChannel: vi.fn(),
 	WebviewView: vi.fn(),
+	EventEmitter: vi.fn().mockImplementation(() => ({
+		event: vi.fn(),
+		fire: vi.fn(),
+		dispose: vi.fn(),
+	})),
 	Uri: {
 		joinPath: vi.fn(),
 		file: vi.fn(),
@@ -130,6 +146,7 @@ vi.mock("vscode", () => ({
 		showInformationMessage: vi.fn(),
 		showWarningMessage: vi.fn(),
 		showErrorMessage: vi.fn(),
+		activeTextEditor: undefined,
 		onDidChangeActiveTextEditor: vi.fn(() => ({ dispose: vi.fn() })),
 	},
 	workspace: {
@@ -137,6 +154,7 @@ vi.mock("vscode", () => ({
 			get: vi.fn().mockReturnValue([]),
 			update: vi.fn(),
 		}),
+		getWorkspaceFolder: vi.fn(),
 		onDidChangeConfiguration: vi.fn().mockImplementation(() => ({
 			dispose: vi.fn(),
 		})),
@@ -211,6 +229,14 @@ vi.mock("../../../api/providers/fetchers/modelCache", () => ({
 	getModels: vi.fn().mockResolvedValue({}),
 	flushModels: vi.fn(),
 	getModelsFromCache: vi.fn().mockReturnValue(undefined),
+}))
+
+vi.mock("../../../services/zoo-code-auth", () => ({
+	getZooCodeBaseUrl: vi.fn(() => "https://www.zoocode.dev"),
+	getCachedZooCodeToken: vi.fn(),
+	handleAuthCallback: vi.fn(),
+	setZooCodeUserInfo: vi.fn(),
+	disconnectZooCode: vi.fn(),
 }))
 
 vi.mock("../../../shared/modes", () => ({
@@ -340,7 +366,7 @@ describe("ClineProvider", () => {
 	let provider: ClineProvider
 	let mockContext: vscode.ExtensionContext
 	let mockOutputChannel: vscode.OutputChannel
-	let mockWebviewView: vscode.WebviewView
+	let mockWebviewView: any
 	let mockPostMessage: any
 	let updateGlobalStateSpy: any
 
@@ -360,7 +386,7 @@ describe("ClineProvider", () => {
 
 		mockContext = {
 			extensionPath: "/test/path",
-			extensionUri: {} as vscode.Uri,
+			extensionUri: { fsPath: "/test/path" } as vscode.Uri,
 			globalState: {
 				get: vi.fn().mockImplementation((key: string) => globalState[key]),
 				update: vi
@@ -419,7 +445,7 @@ describe("ClineProvider", () => {
 				return { dispose: vi.fn() }
 			}),
 			onDidChangeVisibility: vi.fn().mockImplementation(() => ({ dispose: vi.fn() })),
-		} as unknown as vscode.WebviewView
+		}
 
 		provider = new ClineProvider(mockContext, mockOutputChannel, "sidebar", new ContextProxy(mockContext))
 
@@ -454,6 +480,20 @@ describe("ClineProvider", () => {
 		expect(ClineProvider.getVisibleInstance()).toBe(provider)
 	})
 
+	test("resolveWebviewView hydrates the saved terminalProfile into the process-wide Terminal state", async () => {
+		const setTerminalProfileSpy = vi.spyOn(Terminal, "setTerminalProfile").mockImplementation(() => {})
+		// Seed the persisted setting so the real getState() returns it during hydration.
+		await (provider as any).contextProxy.setValue("terminalProfile", "Git Bash")
+
+		await provider.resolveWebviewView(mockWebviewView)
+		// The hydration runs in a getState().then(...) callback, so flush microtasks.
+		await new Promise((resolve) => setImmediate(resolve))
+
+		expect(setTerminalProfileSpy).toHaveBeenCalledWith("Git Bash")
+
+		setTerminalProfileSpy.mockRestore()
+	})
+
 	test("resolveWebviewView sets up webview correctly", async () => {
 		await provider.resolveWebviewView(mockWebviewView)
 
@@ -463,6 +503,48 @@ describe("ClineProvider", () => {
 		})
 
 		expect(mockWebviewView.webview.html).toContain("<!DOCTYPE html>")
+	})
+
+	describe("logWebviewHiddenDiagnostics", () => {
+		let visibilityCallback: () => void
+
+		beforeEach(async () => {
+			// Capture the visibility callback registered during resolveWebviewView
+			mockWebviewView.onDidChangeVisibility = vi.fn().mockImplementation((cb: () => void) => {
+				visibilityCallback = cb
+				return { dispose: vi.fn() }
+			})
+			// @ts-ignore - accessing private property for testing
+			provider.view = mockWebviewView
+			await provider.resolveWebviewView(mockWebviewView)
+			;(mockOutputChannel.appendLine as ReturnType<typeof vi.fn>).mockClear()
+		})
+
+		test("does not log when no task is active", () => {
+			// view becomes hidden with no task on the stack
+			Object.defineProperty(mockWebviewView, "visible", { value: false, configurable: true })
+			visibilityCallback()
+			expect(mockOutputChannel.appendLine).not.toHaveBeenCalled()
+		})
+
+		test("does not log when the active task is aborted", async () => {
+			const task = new Task(defaultTaskOptions)
+			Object.defineProperty(task, "taskId", { value: "aborted-task", writable: true })
+			task.abort = true
+			await provider.addClineToStack(task)
+			Object.defineProperty(mockWebviewView, "visible", { value: false, configurable: true })
+			visibilityCallback()
+			expect(mockOutputChannel.appendLine).not.toHaveBeenCalled()
+		})
+
+		test("logs task state to output channel when an active task is running", async () => {
+			const task = new Task(defaultTaskOptions)
+			Object.defineProperty(task, "taskId", { value: "running-task", writable: true })
+			await provider.addClineToStack(task)
+			Object.defineProperty(mockWebviewView, "visible", { value: false, configurable: true })
+			visibilityCallback()
+			expect(mockOutputChannel.appendLine).toHaveBeenCalledWith(expect.stringContaining("running-task"))
+		})
 	})
 
 	test("resolveWebviewView sets up webview correctly in development mode even if local server is not running", async () => {
@@ -485,7 +567,7 @@ describe("ClineProvider", () => {
 
 		// Verify Content Security Policy contains the necessary PostHog domains
 		expect(mockWebviewView.webview.html).toContain(
-			"connect-src vscode-webview://test-csp-source https://openrouter.ai https://api.requesty.ai https://ph.roocode.com",
+			"connect-src vscode-webview://test-csp-source https://openrouter.ai https://api.requesty.ai https://us.i.posthog.com",
 		)
 
 		// Extract the script-src directive section and verify required security elements
@@ -574,6 +656,29 @@ describe("ClineProvider", () => {
 
 		// Should not throw
 		await expect(provider.postMessageToWebview(message)).resolves.toBeUndefined()
+	})
+
+	test("postStateToWebview does not force action navigation for non-compliant MDM state", async () => {
+		const mdmService = {
+			requiresCloudAuth: vi.fn().mockReturnValue(true),
+			isCompliant: vi.fn().mockReturnValue({ compliant: false, reason: "auth required" }),
+		} as any
+
+		provider = new ClineProvider(
+			mockContext,
+			mockOutputChannel,
+			"sidebar",
+			new ContextProxy(mockContext),
+			mdmService,
+		)
+
+		const postMessageSpy = vi.spyOn(provider, "postMessageToWebview").mockImplementation(async () => undefined)
+		vi.spyOn(provider as any, "getStateToPostToWebview").mockResolvedValue({ version: "1.0.0" })
+
+		await provider.postStateToWebview()
+
+		expect(postMessageSpy).toHaveBeenCalledTimes(1)
+		expect(postMessageSpy).not.toHaveBeenCalledWith(expect.objectContaining({ type: "action" }))
 	})
 
 	test("postMessageToWebview skips postMessage after dispose", async () => {
@@ -1996,15 +2101,17 @@ describe("Project MCP Settings", () => {
 	let provider: ClineProvider
 	let mockContext: vscode.ExtensionContext
 	let mockOutputChannel: vscode.OutputChannel
-	let mockWebviewView: vscode.WebviewView
+	let mockWebviewView: any
 	let mockPostMessage: any
 
-	beforeEach(() => {
+	beforeEach(async () => {
 		vi.clearAllMocks()
+		const pathUtils = await import("../../../utils/path")
+		vi.mocked(pathUtils.getWorkspacePath).mockReturnValue("")
 
 		mockContext = {
 			extensionPath: "/test/path",
-			extensionUri: {} as vscode.Uri,
+			extensionUri: { fsPath: "/test/path" } as vscode.Uri,
 			globalState: {
 				get: vi.fn(),
 				update: vi.fn(),
@@ -2048,14 +2155,17 @@ describe("Project MCP Settings", () => {
 			visible: true,
 			onDidDispose: vi.fn(),
 			onDidChangeVisibility: vi.fn(),
-		} as unknown as vscode.WebviewView
-
+		}
+		;(vscode.window as any).activeTextEditor = undefined
+		;(vscode.workspace.getWorkspaceFolder as any).mockReset()
 		provider = new ClineProvider(mockContext, mockOutputChannel, "sidebar", new ContextProxy(mockContext))
 	})
 
-	test.skip("handles openProjectMcpSettings message", async () => {
+	test("handles openProjectMcpSettings message", async () => {
 		// Mock workspace folders first
 		;(vscode.workspace as any).workspaceFolders = [{ uri: { fsPath: "/test/workspace" } }]
+		const pathUtils = await import("../../../utils/path")
+		vi.mocked(pathUtils.getWorkspacePath).mockReturnValue("/test/workspace")
 
 		// Mock fs functions
 		const fs = await import("fs/promises")
@@ -2086,14 +2196,18 @@ describe("Project MCP Settings", () => {
 			type: "openProjectMcpSettings",
 		})
 
+		const expectedRooDir = path.join("/test/workspace", ".roo")
+		const expectedMcpPath = path.join(expectedRooDir, "mcp.json")
+
 		// Check that fs.mkdir was called with the correct path
-		expect(mockedFs.mkdir).toHaveBeenCalledWith("/test/workspace/.roo", { recursive: true })
+		expect(mockedFs.mkdir).toHaveBeenCalledWith(expectedRooDir, { recursive: true })
+		expect(pathUtils.getWorkspacePath).toHaveBeenCalled()
 
 		// Verify file was created with default content
-		expect(safeWriteJson).toHaveBeenCalledWith("/test/workspace/.roo/mcp.json", { mcpServers: {} })
+		expect(safeWriteJson).toHaveBeenCalledWith(expectedMcpPath, { mcpServers: {} }, { prettyPrint: true })
 
 		// Check that openFile was called
-		expect(openFileSpy).toHaveBeenCalledWith("/test/workspace/.roo/mcp.json")
+		expect(openFileSpy).toHaveBeenCalledWith(expectedMcpPath)
 	})
 
 	test("handles openProjectMcpSettings when workspace is not open", async () => {
@@ -2110,86 +2224,27 @@ describe("Project MCP Settings", () => {
 		expect(vscode.window.showErrorMessage).toHaveBeenCalledWith("errors.no_workspace")
 	})
 
-	test.skip("handles openProjectMcpSettings file creation error", async () => {
+	test("handles openProjectMcpSettings file creation error", async () => {
 		await provider.resolveWebviewView(mockWebviewView)
 		const messageHandler = (mockWebviewView.webview.onDidReceiveMessage as any).mock.calls[0][0]
 
 		// Mock workspace folders
 		;(vscode.workspace as any).workspaceFolders = [{ uri: { fsPath: "/test/workspace" } }]
+		const pathUtils = await import("../../../utils/path")
+		vi.mocked(pathUtils.getWorkspacePath).mockReturnValue("/test/workspace")
 
 		// Mock fs functions to fail
-		const fs = require("fs/promises")
-		fs.mkdir.mockRejectedValue(new Error("Failed to create directory"))
+		const fs = await import("fs/promises")
+		const mockedFs = vi.mocked(fs)
+		mockedFs.mkdir.mockRejectedValue(new Error("Failed to create directory"))
 
 		// Trigger openProjectMcpSettings
 		await messageHandler({
 			type: "openProjectMcpSettings",
 		})
 
-		// Verify error message was shown
-		expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
-			expect.stringContaining("Failed to create or open .roo/mcp.json"),
-		)
-	})
-})
-
-describe.skip("ContextProxy integration", () => {
-	let provider: ClineProvider
-	let mockContext: vscode.ExtensionContext
-	let mockOutputChannel: vscode.OutputChannel
-	let mockContextProxy: any
-
-	beforeEach(() => {
-		// Reset mocks
-		vi.clearAllMocks()
-
-		// Setup basic mocks
-		mockContext = {
-			globalState: {
-				get: vi.fn(),
-				update: vi.fn(),
-				keys: vi.fn().mockReturnValue([]),
-			},
-			workspaceState: {
-				get: vi.fn().mockReturnValue(undefined),
-				update: vi.fn().mockResolvedValue(undefined),
-				keys: vi.fn().mockReturnValue([]),
-			},
-			secrets: { get: vi.fn(), store: vi.fn(), delete: vi.fn() },
-			extensionUri: {} as vscode.Uri,
-			globalStorageUri: { fsPath: "/test/path" },
-			extension: { packageJSON: { version: "1.0.0" } },
-		} as unknown as vscode.ExtensionContext
-
-		mockOutputChannel = { appendLine: vi.fn() } as unknown as vscode.OutputChannel
-		mockContextProxy = new ContextProxy(mockContext)
-		provider = new ClineProvider(mockContext, mockOutputChannel, "sidebar", mockContextProxy)
-	})
-
-	test("updateGlobalState uses contextProxy", async () => {
-		await provider.setValue("currentApiConfigName", "testValue")
-		expect(mockContextProxy.updateGlobalState).toHaveBeenCalledWith("currentApiConfigName", "testValue")
-	})
-
-	test("getGlobalState uses contextProxy", async () => {
-		mockContextProxy.getGlobalState.mockResolvedValueOnce("testValue")
-		const result = await provider.getValue("currentApiConfigName")
-		expect(mockContextProxy.getGlobalState).toHaveBeenCalledWith("currentApiConfigName")
-		expect(result).toBe("testValue")
-	})
-
-	test("storeSecret uses contextProxy", async () => {
-		await provider.setValue("apiKey", "test-secret")
-		expect(mockContextProxy.storeSecret).toHaveBeenCalledWith("apiKey", "test-secret")
-	})
-
-	test("contextProxy methods are available", () => {
-		// Verify the contextProxy has all the required methods
-		expect(mockContextProxy.getGlobalState).toBeDefined()
-		expect(mockContextProxy.updateGlobalState).toBeDefined()
-		expect(mockContextProxy.storeSecret).toBeDefined()
-		expect(mockContextProxy.setValue).toBeDefined()
-		expect(mockContextProxy.setValues).toBeDefined()
+		// Verify the translated error key is surfaced in test mode
+		expect(vscode.window.showErrorMessage).toHaveBeenCalledWith("errors.create_json")
 	})
 })
 
@@ -2226,7 +2281,7 @@ describe("getTelemetryProperties", () => {
 				keys: vi.fn().mockReturnValue([]),
 			},
 			secrets: { get: vi.fn(), store: vi.fn(), delete: vi.fn() },
-			extensionUri: {} as vscode.Uri,
+			extensionUri: { fsPath: "/test/path" } as vscode.Uri,
 			globalStorageUri: { fsPath: "/test/path" },
 			extension: { packageJSON: { version: "1.0.0" } },
 		} as unknown as vscode.ExtensionContext
@@ -2363,7 +2418,7 @@ describe("ClineProvider - Router Models", () => {
 	let provider: ClineProvider
 	let mockContext: vscode.ExtensionContext
 	let mockOutputChannel: vscode.OutputChannel
-	let mockWebviewView: vscode.WebviewView
+	let mockWebviewView: any
 	let mockPostMessage: any
 
 	beforeEach(() => {
@@ -2374,7 +2429,7 @@ describe("ClineProvider - Router Models", () => {
 
 		mockContext = {
 			extensionPath: "/test/path",
-			extensionUri: {} as vscode.Uri,
+			extensionUri: { fsPath: "/test/path" } as vscode.Uri,
 			globalState: {
 				get: vi.fn().mockImplementation((key: string) => globalState[key]),
 				update: vi
@@ -2422,7 +2477,7 @@ describe("ClineProvider - Router Models", () => {
 				return { dispose: vi.fn() }
 			}),
 			onDidChangeVisibility: vi.fn().mockImplementation(() => ({ dispose: vi.fn() })),
-		} as unknown as vscode.WebviewView
+		}
 
 		if (!TelemetryService.hasInstance()) {
 			TelemetryService.createInstance([])
@@ -2470,12 +2525,6 @@ describe("ClineProvider - Router Models", () => {
 		expect(getModels).toHaveBeenCalledWith({ provider: "requesty", apiKey: "requesty-key" })
 		expect(getModels).toHaveBeenCalledWith({ provider: "unbound" })
 		expect(getModels).toHaveBeenCalledWith({ provider: "vercel-ai-gateway" })
-		expect(getModels).toHaveBeenCalledWith(
-			expect.objectContaining({
-				provider: "roo",
-				baseUrl: expect.any(String),
-			}),
-		)
 		expect(getModels).toHaveBeenCalledWith({
 			provider: "litellm",
 			apiKey: "litellm-key",
@@ -2489,12 +2538,14 @@ describe("ClineProvider - Router Models", () => {
 				openrouter: mockModels,
 				requesty: mockModels,
 				unbound: mockModels,
-				roo: mockModels,
+				"vercel-ai-gateway": mockModels,
+				"zoo-gateway": mockModels,
 				litellm: mockModels,
 				ollama: {},
 				lmstudio: {},
-				"vercel-ai-gateway": mockModels,
 				poe: {},
+				deepseek: {},
+				"opencode-go": {},
 			},
 			values: undefined,
 		})
@@ -2524,7 +2575,7 @@ describe("ClineProvider - Router Models", () => {
 			.mockRejectedValueOnce(new Error("Requesty API error")) // requesty fail
 			.mockResolvedValueOnce(mockModels) // unbound success
 			.mockResolvedValueOnce(mockModels) // vercel-ai-gateway success
-			.mockResolvedValueOnce(mockModels) // roo success
+			.mockResolvedValueOnce(mockModels) // zoo-gateway success
 			.mockRejectedValueOnce(new Error("LiteLLM connection failed")) // litellm fail
 
 		await messageHandler({ type: "requestRouterModels" })
@@ -2536,12 +2587,14 @@ describe("ClineProvider - Router Models", () => {
 				openrouter: mockModels,
 				requesty: {},
 				unbound: mockModels,
-				roo: mockModels,
+				"vercel-ai-gateway": mockModels,
+				"zoo-gateway": mockModels,
 				ollama: {},
 				lmstudio: {},
 				litellm: {},
-				"vercel-ai-gateway": mockModels,
 				poe: {},
+				deepseek: {},
+				"opencode-go": {},
 			},
 			values: undefined,
 		})
@@ -2631,12 +2684,14 @@ describe("ClineProvider - Router Models", () => {
 				openrouter: mockModels,
 				requesty: mockModels,
 				unbound: mockModels,
-				roo: mockModels,
+				"vercel-ai-gateway": mockModels,
+				"zoo-gateway": mockModels,
 				litellm: {},
 				ollama: {},
 				lmstudio: {},
-				"vercel-ai-gateway": mockModels,
 				poe: {},
+				deepseek: {},
+				"opencode-go": {},
 			},
 			values: undefined,
 		})
@@ -2674,7 +2729,7 @@ describe("ClineProvider - Comprehensive Edit/Delete Edge Cases", () => {
 	let provider: ClineProvider
 	let mockContext: vscode.ExtensionContext
 	let mockOutputChannel: vscode.OutputChannel
-	let mockWebviewView: vscode.WebviewView
+	let mockWebviewView: any
 	let mockPostMessage: any
 	let defaultTaskOptions: TaskOptions
 
@@ -2694,7 +2749,7 @@ describe("ClineProvider - Comprehensive Edit/Delete Edge Cases", () => {
 
 		mockContext = {
 			extensionPath: "/test/path",
-			extensionUri: {} as vscode.Uri,
+			extensionUri: { fsPath: "/test/path" } as vscode.Uri,
 			globalState: {
 				get: vi.fn().mockImplementation((key: string) => globalState[key]),
 				update: vi
@@ -2743,7 +2798,7 @@ describe("ClineProvider - Comprehensive Edit/Delete Edge Cases", () => {
 				return { dispose: vi.fn() }
 			}),
 			onDidChangeVisibility: vi.fn().mockImplementation(() => ({ dispose: vi.fn() })),
-		} as unknown as vscode.WebviewView
+		}
 
 		provider = new ClineProvider(mockContext, mockOutputChannel, "sidebar", new ContextProxy(mockContext))
 
@@ -3672,6 +3727,183 @@ describe("ClineProvider - Comprehensive Edit/Delete Edge Cases", () => {
 
 			// Restore the spy
 			vi.mocked(fsUtils.fileExistsAtPath).mockRestore()
+		})
+	})
+
+	describe("Zoo Code auth profile sync", () => {
+		beforeEach(async () => {
+			const { getCachedZooCodeToken } = await import("../../../services/zoo-code-auth")
+			vi.mocked(getCachedZooCodeToken).mockReturnValue("")
+		})
+
+		describe("handleZooCodeCallback", () => {
+			it("creates a Zoo Gateway profile when none exists", async () => {
+				vi.spyOn(provider, "getState").mockResolvedValue({
+					apiConfiguration: { zooGatewayModelId: "anthropic/claude-sonnet-4" },
+				} as any)
+				vi.spyOn(provider.contextProxy, "getProviderSettings").mockReturnValue({
+					apiProvider: "anthropic",
+				} as any)
+				vi.spyOn(provider.contextProxy, "getValues").mockReturnValue({
+					currentApiConfigName: "Anthropic",
+				} as any)
+				const upsertSpy = vi.spyOn(provider, "upsertProviderProfile").mockResolvedValue("profile-id")
+				vi.spyOn(provider, "postStateToWebview").mockResolvedValue(undefined)
+				const postMessageSpy = vi.spyOn(provider, "postMessageToWebview").mockResolvedValue(undefined)
+				;(provider as any).providerSettingsManager = {
+					listConfig: vi.fn().mockResolvedValue([]),
+				}
+
+				await provider.handleZooCodeCallback("zoo_ext_token")
+
+				expect(postMessageSpy).toHaveBeenCalledWith({ type: "zooGatewayCredentialsReady" })
+				expect(upsertSpy).toHaveBeenCalledWith(
+					"Zoo Gateway",
+					expect.objectContaining({
+						apiProvider: "zoo-gateway",
+						zooSessionToken: "zoo_ext_token",
+						zooGatewayBaseUrl: "https://www.zoocode.dev/api/gateway/v1",
+					}),
+					false,
+				)
+			})
+
+			it("updates every zoo-gateway profile and activates only the active one", async () => {
+				vi.spyOn(provider, "getState").mockResolvedValue({
+					apiConfiguration: { zooGatewayModelId: "anthropic/claude-sonnet-4" },
+				} as any)
+				vi.spyOn(provider.contextProxy, "getProviderSettings").mockReturnValue({
+					apiProvider: "zoo-gateway",
+				} as any)
+				vi.spyOn(provider.contextProxy, "getValues").mockReturnValue({
+					currentApiConfigName: "Zoo Gateway",
+				} as any)
+				const upsertSpy = vi.spyOn(provider, "upsertProviderProfile").mockResolvedValue("profile-id")
+				const saveConfig = vi.fn().mockResolvedValue(undefined)
+				vi.spyOn(provider, "postStateToWebview").mockResolvedValue(undefined)
+				;(provider as any).providerSettingsManager = {
+					listConfig: vi.fn().mockResolvedValue([
+						{ name: "Zoo Gateway", apiProvider: "zoo-gateway" },
+						{ name: "Backup Zoo", apiProvider: "zoo-gateway" },
+					]),
+					getProfile: vi
+						.fn()
+						.mockResolvedValueOnce({
+							apiProvider: "zoo-gateway",
+							zooSessionToken: "old-token",
+							zooGatewayBaseUrl: "https://old.example/api/gateway/v1",
+						})
+						.mockResolvedValueOnce({
+							apiProvider: "zoo-gateway",
+							zooSessionToken: "old-token",
+						}),
+					saveConfig,
+				}
+
+				await provider.handleZooCodeCallback("new-token")
+
+				expect(upsertSpy).toHaveBeenCalledWith(
+					"Zoo Gateway",
+					expect.objectContaining({
+						zooSessionToken: "new-token",
+						zooGatewayBaseUrl: "https://www.zoocode.dev/api/gateway/v1",
+					}),
+					true,
+				)
+				expect(saveConfig).toHaveBeenCalledWith(
+					"Backup Zoo",
+					expect.objectContaining({
+						zooSessionToken: "new-token",
+						zooGatewayBaseUrl: "https://www.zoocode.dev/api/gateway/v1",
+					}),
+				)
+			})
+
+			it("logs and posts state when profile persistence fails", async () => {
+				vi.spyOn(provider, "getState").mockRejectedValue(new Error("state unavailable"))
+				vi.spyOn(provider, "postStateToWebview").mockResolvedValue(undefined)
+				;(provider as any).providerSettingsManager = {
+					listConfig: vi.fn().mockResolvedValue([]),
+				}
+
+				await provider.handleZooCodeCallback("zoo_ext_token")
+
+				expect(mockOutputChannel.appendLine).toHaveBeenCalledWith(
+					expect.stringContaining("[handleZooCodeCallback] Failed to save zoo-gateway profile"),
+				)
+				// State must still be refreshed even when profile persistence fails.
+				expect(provider.postStateToWebview).toHaveBeenCalled()
+			})
+		})
+
+		describe("ensureZooGatewayProfileSeeded", () => {
+			it("does nothing when no cached auth token exists", async () => {
+				const handleSpy = vi.spyOn(provider, "handleZooCodeCallback").mockResolvedValue(undefined)
+
+				;(provider as any).providerSettingsManager = {
+					listConfig: vi.fn(),
+				}
+
+				await (provider as any).ensureZooGatewayProfileSeeded()
+
+				expect(handleSpy).not.toHaveBeenCalled()
+			})
+
+			it("skips seeding when every zoo-gateway profile already has the current token and base URL", async () => {
+				const { getCachedZooCodeToken } = await import("../../../services/zoo-code-auth")
+				vi.mocked(getCachedZooCodeToken).mockReturnValue("current-token")
+				const handleSpy = vi.spyOn(provider, "handleZooCodeCallback").mockResolvedValue(undefined)
+				const postMessageSpy = vi.spyOn(provider, "postMessageToWebview").mockResolvedValue(undefined)
+
+				;(provider as any).providerSettingsManager = {
+					listConfig: vi.fn().mockResolvedValue([{ name: "Zoo Gateway", apiProvider: "zoo-gateway" }]),
+					getProfile: vi.fn().mockResolvedValue({
+						zooSessionToken: "current-token",
+						zooGatewayBaseUrl: "https://www.zoocode.dev/api/gateway/v1",
+					}),
+				}
+
+				await (provider as any).ensureZooGatewayProfileSeeded()
+
+				expect(handleSpy).not.toHaveBeenCalled()
+				expect(postMessageSpy).toHaveBeenCalledWith({ type: "zooGatewayCredentialsReady" })
+			})
+
+			it("re-seeds when any zoo-gateway profile has a stale or missing token", async () => {
+				const { getCachedZooCodeToken } = await import("../../../services/zoo-code-auth")
+				vi.mocked(getCachedZooCodeToken).mockReturnValue("fresh-token")
+				const handleSpy = vi.spyOn(provider, "handleZooCodeCallback").mockResolvedValue(undefined)
+
+				;(provider as any).providerSettingsManager = {
+					listConfig: vi.fn().mockResolvedValue([{ name: "Zoo Gateway", apiProvider: "zoo-gateway" }]),
+					getProfile: vi.fn().mockResolvedValue({
+						zooSessionToken: "stale-token",
+						zooGatewayBaseUrl: "https://www.zoocode.dev/api/gateway/v1",
+					}),
+				}
+
+				await (provider as any).ensureZooGatewayProfileSeeded()
+
+				expect(handleSpy).toHaveBeenCalledWith("fresh-token")
+			})
+
+			it("re-seeds when any zoo-gateway profile has a stale base URL", async () => {
+				const { getCachedZooCodeToken } = await import("../../../services/zoo-code-auth")
+				vi.mocked(getCachedZooCodeToken).mockReturnValue("current-token")
+				const handleSpy = vi.spyOn(provider, "handleZooCodeCallback").mockResolvedValue(undefined)
+
+				;(provider as any).providerSettingsManager = {
+					listConfig: vi.fn().mockResolvedValue([{ name: "Zoo Gateway", apiProvider: "zoo-gateway" }]),
+					getProfile: vi.fn().mockResolvedValue({
+						zooSessionToken: "current-token",
+						zooGatewayBaseUrl: "https://staging.zoocode.dev/api/gateway/v1",
+					}),
+				}
+
+				await (provider as any).ensureZooGatewayProfileSeeded()
+
+				expect(handleSpy).toHaveBeenCalledWith("current-token")
+			})
 		})
 	})
 })

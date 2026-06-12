@@ -46,6 +46,10 @@ async function main() {
 		format: "cjs",
 		sourcesContent: false,
 		platform: "node",
+		define: {
+			"process.env.PKG_RELEASE_CHANNEL": JSON.stringify(process.env.PKG_RELEASE_CHANNEL || "stable"),
+			"process.env.POSTHOG_API_KEY": JSON.stringify(process.env.POSTHOG_API_KEY || ""),
+		},
 	}
 
 	const srcDir = __dirname
@@ -73,6 +77,7 @@ async function main() {
 							["../.env", ".env", { optional: true }],
 							["node_modules/vscode-material-icons/generated", "assets/vscode-material-icons"],
 							["../webview-ui/audio", "webview-ui/audio"],
+							["assets/marketplace", "dist/assets/marketplace"],
 						],
 						srcDir,
 						buildDir,
@@ -121,7 +126,7 @@ async function main() {
 		// global-agent must be external because it dynamically patches Node.js http/https modules
 		// which breaks when bundled. It needs access to the actual Node.js module instances.
 		// undici must be bundled because our VSIX is packaged with `--no-dependencies`.
-		external: ["vscode", "esbuild", "global-agent"],
+		external: ["vscode", "esbuild", "global-agent", "@vscode/ripgrep"],
 	}
 
 	/**
@@ -143,7 +148,10 @@ async function main() {
 		copyLocales(srcDir, distDir)
 		setupLocaleWatcher(srcDir, distDir)
 	} else {
-		await Promise.all([extensionCtx.rebuild(), workerCtx.rebuild()])
+		// Run sequentially on rebuild to avoid Windows EBUSY races when both
+		// onEnd hooks copy the same asset directories concurrently.
+		await extensionCtx.rebuild()
+		await workerCtx.rebuild()
 		await Promise.all([extensionCtx.dispose(), workerCtx.dispose()])
 	}
 }

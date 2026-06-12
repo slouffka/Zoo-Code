@@ -435,6 +435,29 @@ describe("ContextProxy", () => {
 	})
 
 	describe("invalid apiProvider migration", () => {
+		it("should clear Roo provider state during initialization", async () => {
+			vi.clearAllMocks()
+			mockGlobalState.get.mockImplementation((key: string) => {
+				if (key === "apiProvider") {
+					return "roo"
+				}
+				if (key === "apiModelId") {
+					return "roo/code-supernova"
+				}
+				if (key === "rooApiKey") {
+					return "router-key"
+				}
+				return undefined
+			})
+
+			const proxyWithRooProvider = new ContextProxy(mockContext)
+			await proxyWithRooProvider.initialize()
+
+			expect(mockGlobalState.update).toHaveBeenCalledWith("apiProvider", undefined)
+			expect(mockGlobalState.update).toHaveBeenCalledWith("apiModelId", undefined)
+			expect(mockGlobalState.update).toHaveBeenCalledWith("rooApiKey", undefined)
+		})
+
 		it("should clear invalid apiProvider from storage during initialization", async () => {
 			// Reset and create a new proxy with invalid provider in state
 			vi.clearAllMocks()

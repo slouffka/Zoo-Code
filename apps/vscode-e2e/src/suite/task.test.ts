@@ -21,16 +21,16 @@ suite("Roo Code Task", function () {
 
 		const taskId = await api.startNewTask({
 			configuration: { mode: "ask", alwaysAllowModeSwitch: true, autoApprovalEnabled: true },
-			text: "Hello world, what is your name? Respond with 'My name is ...'",
+			text: "TASK_HELLO_WORLD_SMOKE: what is your name?",
 		})
 
 		await waitUntilCompleted({ api, taskId })
 
 		assert.ok(
 			!!messages.find(
-				({ say, text }) => (say === "completion_result" || say === "text") && text?.includes("My name is Roo"),
+				({ say, text }) => (say === "completion_result" || say === "text") && text?.includes("My name is Zoo"),
 			),
-			`Completion should include "My name is Roo"`,
+			`Completion should include "My name is Zoo"`,
 		)
 	})
 })

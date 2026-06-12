@@ -11,15 +11,17 @@
 </sub>
 </div>
 
-# Berkontribusi pada Roo Code
+# Berkontribusi pada Zoo Code
 
-Roo Code adalah proyek yang digerakkan oleh komunitas, dan kami sangat menghargai setiap kontribusi. Untuk menyederhanakan kolaborasi, kami beroperasi dengan dasar [Pendekatan Masalah-Dulu](#pendekatan-masalah-dulu), yang berarti semua [Pull Request (PR)](#mengajukan-pull-request) harus terlebih dahulu ditautkan ke Masalah GitHub. Harap tinjau panduan ini dengan cermat.
+Zoo Code adalah proyek yang digerakkan oleh komunitas, dan kami sangat menghargai setiap kontribusi. Untuk menyederhanakan kolaborasi, kami beroperasi dengan dasar [Pendekatan Masalah-Dulu](#pendekatan-masalah-dulu), yang berarti semua [Pull Request (PR)](#mengajukan-pull-request) harus terlebih dahulu ditautkan ke Masalah GitHub. Harap tinjau panduan ini dengan cermat.
 
 ## Daftar Isi
 
 - [Sebelum Anda Berkontribusi](#sebelum-anda-berkontribusi)
 - [Menemukan & Merencanakan Kontribusi Anda](#menemukan--merencanakan-kontribusi-anda)
 - [Proses Pengembangan & Pengajuan](#proses-pengembangan--pengajuan)
+- [Ekspektasi Pull Request](#ekspektasi-pull-request)
+- [Kontribusi Berbantuan AI](#kontribusi-berbantuan-ai)
 - [Hukum](#hukum)
 
 ## Sebelum Anda Berkontribusi
@@ -52,10 +54,10 @@ Peta jalan kami memandu arah proyek. Sejajarkan kontribusi Anda dengan tujuan-tu
 
 Sebutkan keselarasan dengan area-area ini di PR Anda.
 
-### 3. Bergabunglah dengan Komunitas Roo Code
+### 3. Bergabunglah dengan Komunitas Zoo Code
 
-- **Utama:** Bergabunglah dengan [Discord](https://discord.gg/roocode) kami dan kirim DM ke **Hannes Rudolph (`hrudolph`)**.
-- **Alternatif:** Kontributor berpengalaman dapat terlibat langsung melalui [Proyek GitHub](https://github.com/orgs/RooCodeInc/projects/1).
+- **Discord:** Bergabunglah dengan [Discord](https://discord.gg/VxfP4Vx3gX) kami.
+- **Reddit:** Bergabunglah dengan [Reddit](https://www.reddit.com/r/ZooCode/) kami.
 
 ## Menemukan & Merencanakan Kontribusi Anda
 
@@ -69,26 +71,26 @@ Sebutkan keselarasan dengan area-area ini di PR Anda.
 
 Semua kontribusi dimulai dengan Masalah GitHub menggunakan template ramping kami.
 
-- **Periksa masalah yang ada**: Cari di [Masalah GitHub](https://github.com/RooCodeInc/Roo-Code/issues).
+- **Periksa masalah yang ada**: Cari di [Masalah GitHub](https://github.com/Zoo-Code-Org/Zoo-Code/issues).
 - **Buat masalah** menggunakan:
     - **Penyempurnaan:** Template "Permintaan Penyempurnaan" (bahasa sederhana yang berfokus pada manfaat pengguna).
     - **Bug:** Template "Laporan Bug" (repro minimal + yang diharapkan vs aktual + versi).
-- **Ingin mengerjakannya?** Beri komentar "Mengklaim" pada masalah tersebut dan kirim DM ke **Hannes Rudolph (`hrudolph`)** di [Discord](https://discord.gg/roocode) untuk ditugaskan. Penugasan akan dikonfirmasi di utas.
+- **Ingin mengerjakannya?** Beri komentar "Mengklaim" pada masalah tersebut dan kirim DM ke tim inti di [Discord](https://discord.gg/VxfP4Vx3gX) untuk ditugaskan. Penugasan akan dikonfirmasi di utas.
 - **PR harus menautkan ke masalah.** PR yang tidak tertaut dapat ditutup.
 
 ### Memutuskan Apa yang Akan Dikerjakan
 
-- Periksa [Proyek GitHub](https://github.com/orgs/RooCodeInc/projects/1) untuk masalah "Masalah [Belum Ditugaskan]".
-- Untuk dokumentasi, kunjungi [Dokumentasi Roo Code](https://github.com/RooCodeInc/Roo-Code-Docs).
+- Periksa [halaman GitHub Issues](https://github.com/Zoo-Code-Org/Zoo-Code/issues) untuk melihat issues.
+- Untuk dokumentasi, kunjungi [Dokumentasi Zoo Code](https://github.com/Zoo-Code-Org/Zoo-Code-Docs).
 
 ### Melaporkan Bug
 
 - Periksa laporan yang ada terlebih dahulu.
-- Buat bug baru menggunakan [template "Laporan Bug"](https://github.com/RooCodeInc/Roo-Code/issues/new/choose) dengan:
+- Buat bug baru menggunakan [template "Laporan Bug"](https://github.com/Zoo-Code-Org/Zoo-Code/issues/new/choose) dengan:
     - Langkah-langkah reproduksi yang jelas dan bernomor
     - Hasil yang diharapkan vs aktual
-    - Versi Roo Code (wajib); penyedia/model API jika relevan
-- **Masalah keamanan**: Laporkan secara pribadi melalui [saran keamanan](https://github.com/RooCodeInc/Roo-Code/security/advisories/new).
+    - Versi Zoo Code (wajib); penyedia/model API jika relevan
+- **Masalah keamanan**: Laporkan secara pribadi melalui [saran keamanan](https://github.com/Zoo-Code-Org/Zoo-Code/security/advisories/new).
 
 ## Proses Pengembangan & Pengajuan
 
@@ -97,7 +99,7 @@ Semua kontribusi dimulai dengan Masalah GitHub menggunakan template ramping kami
 1. **Fork & Klon:**
 
 ```
-git clone https://github.com/NAMA_PENGGUNA_ANDA/Roo-Code.git
+git clone https://github.com/YOUR_USERNAME/Zoo-Code.git
 ```
 
 2. **Instal Ketergantungan:**
@@ -126,7 +128,7 @@ pnpm install
 
 ### Kebijakan Pull Request
 
-- Harus merujuk pada Masalah GitHub yang ditugaskan. Untuk ditugaskan: beri komentar "Mengklaim" pada masalah tersebut dan kirim DM ke **Hannes Rudolph (`hrudolph`)** di [Discord](https://discord.gg/roocode). Penugasan akan dikonfirmasi di utas.
+- Harus merujuk pada Masalah GitHub yang ditugaskan. Untuk ditugaskan: beri komentar "Mengklaim" pada masalah tersebut dan kirim DM ke tim inti di [Discord](https://discord.gg/VxfP4Vx3gX). Penugasan akan dikonfirmasi di utas.
 - PR yang tidak tertaut dapat ditutup.
 - PR harus lulus tes CI, selaras dengan peta jalan, dan memiliki dokumentasi yang jelas.
 
@@ -136,6 +138,32 @@ pnpm install
 - **Tinjauan Mendalam Mingguan:** Penilaian komprehensif.
 - **Iterasi dengan cepat** berdasarkan umpan balik.
 
+### Ekspektasi Pull Request
+
+Pull Request harus dapat ditinjau, diuji, dan dapat dipelihara. Sebelum membuka PR, pastikan bahwa:
+
+- Perubahan dibatasi pada masalah, bug, atau peningkatan tertentu.
+- Anda dapat menjelaskan apa yang dilakukan perubahan dan mengapa hal itu benar.
+- Anda telah menguji perubahan secara lokal jika memungkinkan.
+- Anda bersedia merespons umpan balik ulasan dan melakukan perubahan tindak lanjut yang wajar.
+- PR tidak mengharuskan pengelola untuk menulis ulang, mendesain ulang, atau mengambil alih kepemilikan implementasi secara substansial sebelum dapat digabungkan.
+
+Pengelola dapat menutup PR yang tidak lengkap, terlalu luas, tidak aktif, tidak selaras dengan arah proyek, atau yang menciptakan beban ulasan atau pemeliharaan yang tidak proporsional. Menutup PR bukan merupakan penilaian terhadap kontributor; itu adalah keputusan pengelola bahwa perubahan tersebut tidak dapat diterima dalam bentuknya saat ini.
+
+### Kontribusi Berbantuan AI
+
+Penggunaan alat AI diperbolehkan, tetapi kontributor tetap sepenuhnya bertanggung jawab atas kiriman mereka.
+
+Jika Anda menggunakan alat AI untuk membantu membuat PR, Anda harus:
+
+- Meninjau dan memahami setiap perubahan yang berarti.
+- Mampu menjelaskan implementasi dan pertukaran dengan kata-kata Anda sendiri.
+- Menguji perubahan sendiri. Jika pengujian tidak praktis di lingkungan Anda, jelaskan alasannya dalam deskripsi PR dan uraikan bagaimana peninjau dapat memverifikasi perubahan tersebut.
+- Memverifikasi bahwa kode yang dihasilkan benar, diperlukan, dan kompatibel dengan lisensi proyek.
+- Pertimbangkan untuk mengungkapkan bantuan AI dalam deskripsi PR ketika hal itu secara material membentuk kode, pengujian, atau desain — ini membantu peninjau memberikan umpan balik yang lebih baik.
+
+Jangan mengirimkan perubahan yang dihasilkan AI yang tidak Anda pahami atau tidak dapat Anda pertahankan melalui ulasan. Pengelola dapat menutup PR yang tampaknya sebagian besar dibantu AI tetapi tidak memiliki verifikasi manusia, alasan yang jelas, atau tindak lanjut ulasan.
+
 ## Hukum
 
-Dengan berkontribusi, Anda setuju bahwa kontribusi Anda akan dilisensikan di bawah Lisensi Apache 2.0, sesuai dengan lisensi Roo Code.
+Dengan berkontribusi, Anda setuju bahwa kontribusi Anda akan dilisensikan di bawah Lisensi Apache 2.0, sesuai dengan lisensi Zoo Code.

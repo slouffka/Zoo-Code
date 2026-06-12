@@ -1,10 +1,12 @@
 import { defineConfig } from "vitest/config"
+import react from "@vitejs/plugin-react"
 import path from "path"
 import { resolveVerbosity } from "../src/utils/vitest-verbosity"
 
 const { silent, reporters, onConsoleLog } = resolveVerbosity()
 
 export default defineConfig({
+	plugins: [react()],
 	test: {
 		globals: true,
 		setupFiles: ["./vitest.setup.ts"],
@@ -14,6 +16,20 @@ export default defineConfig({
 		environment: "jsdom",
 		include: ["src/**/*.spec.ts", "src/**/*.spec.tsx"],
 		onConsoleLog,
+		coverage: {
+			provider: "v8",
+			reporter: ["text", "lcov"],
+			exclude: [
+				"**/*.test.ts",
+				"**/*.test.tsx",
+				"**/*.spec.ts",
+				"**/*.spec.tsx",
+				"**/vitest.setup.ts",
+				"**/vitest.config.ts",
+				"**/vite.config.ts",
+				"**/__mocks__/**",
+			],
+		},
 	},
 	resolve: {
 		alias: {

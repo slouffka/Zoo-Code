@@ -16,8 +16,10 @@ export const geminiModels = {
 		supportsTemperature: true,
 		defaultTemperature: 1,
 		inputPrice: 1.5,
-		outputPrice: 9.0,
+		outputPrice: 9,
 		cacheReadsPrice: 0.15,
+		cacheWritesPrice: 1.0,
+		supportsReasoningBudget: false,
 	},
 	"gemini-3.1-flash-lite": {
 		maxTokens: 65_536,

@@ -6,6 +6,33 @@ import type { ProviderSettings } from "@roo-code/types"
 
 import { ProviderSettingsManager, ProviderProfiles, SyncCloudProfilesResult } from "../ProviderSettingsManager"
 
+// `export()` builds an API handler per profile to read model capabilities. Mock
+// buildApiHandler with the real @roo-code/types model definitions so the token-field
+// filtering is driven by real capability flags, and so this suite stays isolated from
+// sibling specs that also mock "../../../api" (avoids a cross-file mock leak under
+// Vitest's singleFork pool).
+vi.mock("../../../api", async () => {
+	const types = await vi.importActual<typeof import("@roo-code/types")>("@roo-code/types")
+	const zaiModels = { ...types.internationalZAiModels, ...types.mainlandZAiModels } as Record<string, unknown>
+	const anthropicModels = types.anthropicModels as Record<string, unknown>
+	const modelInfoFor = (config: { apiProvider?: string; apiModelId?: string }) => {
+		const id = config?.apiModelId ?? ""
+		switch (config?.apiProvider) {
+			case "zai":
+				return zaiModels[id] ?? {}
+			case "anthropic":
+				return anthropicModels[id] ?? {}
+			default:
+				return {}
+		}
+	}
+	return {
+		buildApiHandler: (config: any) => ({
+			getModel: () => ({ id: config?.apiModelId ?? "", info: modelInfoFor(config) }),
+		}),
+	}
+})
+
 // Mock VSCode ExtensionContext
 const mockSecrets = {
 	get: vi.fn(),
@@ -66,6 +93,7 @@ describe("ProviderSettingsManager", () => {
 						consecutiveMistakeLimitMigrated: true,
 						todoListEnabledMigrated: true,
 						claudeCodeLegacySettingsMigrated: true,
+						routerProviderMigrated: true,
 					},
 				}),
 			)
@@ -224,7 +252,7 @@ describe("ProviderSettingsManager", () => {
 			expect(storedConfig.migrations.todoListEnabledMigrated).toEqual(true)
 		})
 
-		it("should apply model migrations for all providers", async () => {
+		it("should migrate legacy Roo provider profiles into a setup-needed fallback", async () => {
 			mockSecrets.get.mockResolvedValue(
 				JSON.stringify({
 					currentApiConfigName: "default",
@@ -253,6 +281,7 @@ describe("ProviderSettingsManager", () => {
 						},
 					},
 					migrations: {
+						routerProviderMigrated: false,
 						rateLimitSecondsMigrated: true,
 						openAiHeadersMigrated: true,
 						consecutiveMistakeLimitMigrated: true,
@@ -267,73 +296,41 @@ describe("ProviderSettingsManager", () => {
 			const calls = mockSecrets.store.mock.calls
 			const storedConfig = JSON.parse(calls[calls.length - 1][1])
 
-			// Roo provider configs should be migrated
-			expect(storedConfig.apiConfigs.default.apiModelId).toEqual("roo/code-supernova-1-million")
-			expect(storedConfig.apiConfigs.test.apiModelId).toEqual("roo/code-supernova-1-million")
-			expect(storedConfig.apiConfigs.existing.apiModelId).toEqual("roo/code-supernova-1-million")
+			// Roo provider configs should be downgraded into an unconfigured fallback state
+			expect(storedConfig.apiConfigs.default.apiProvider).toBeUndefined()
+			expect(storedConfig.apiConfigs.default.apiModelId).toBeUndefined()
+			expect(storedConfig.apiConfigs.test.apiProvider).toBeUndefined()
+			expect(storedConfig.apiConfigs.test.apiModelId).toBeUndefined()
+			expect(storedConfig.apiConfigs.existing.apiProvider).toBeUndefined()
+			expect(storedConfig.apiConfigs.existing.apiModelId).toBeUndefined()
+			expect(storedConfig.migrations.routerProviderMigrated).toEqual(true)
 
 			// Non-roo provider configs should not be migrated
 			expect(storedConfig.apiConfigs.otherProvider.apiModelId).toEqual("roo/code-supernova")
 			expect(storedConfig.apiConfigs.noProvider.apiModelId).toEqual("roo/code-supernova")
 		})
 
-		it("should apply model migrations every time, not just once", async () => {
-			// First load with old model
+		it("should downgrade Roo provider when saving a profile", async () => {
 			mockSecrets.get.mockResolvedValue(
 				JSON.stringify({
 					currentApiConfigName: "default",
 					apiConfigs: {
-						default: {
-							apiProvider: "roo",
-							apiModelId: "roo/code-supernova",
-							id: "default",
-						},
+						default: { id: "default" },
 					},
-					migrations: {
-						rateLimitSecondsMigrated: true,
-						openAiHeadersMigrated: true,
-						consecutiveMistakeLimitMigrated: true,
-						todoListEnabledMigrated: true,
-					},
+					migrations: {},
 				}),
 			)
 
-			await providerSettingsManager.initialize()
+			await providerSettingsManager.saveConfig("router-profile", {
+				id: "router-id",
+				apiProvider: "roo",
+				apiModelId: "roo/code-supernova",
+				rooApiKey: "router-key",
+			} as any)
 
-			// Verify migration happened
-			let calls = mockSecrets.store.mock.calls
-			let storedConfig = JSON.parse(calls[calls.length - 1][1])
-			expect(storedConfig.apiConfigs.default.apiModelId).toEqual("roo/code-supernova-1-million")
-
-			// Create a new instance to simulate another load
-			const newManager = new ProviderSettingsManager(mockContext)
-
-			// Somehow the model got reverted (e.g., manual edit, sync issue)
-			mockSecrets.get.mockResolvedValue(
-				JSON.stringify({
-					currentApiConfigName: "default",
-					apiConfigs: {
-						default: {
-							apiProvider: "roo",
-							apiModelId: "roo/code-supernova", // Old model again
-							id: "default",
-						},
-					},
-					migrations: {
-						rateLimitSecondsMigrated: true,
-						openAiHeadersMigrated: true,
-						consecutiveMistakeLimitMigrated: true,
-						todoListEnabledMigrated: true,
-					},
-				}),
-			)
-
-			await newManager.initialize()
-
-			// Verify migration happened again
-			calls = mockSecrets.store.mock.calls
-			storedConfig = JSON.parse(calls[calls.length - 1][1])
-			expect(storedConfig.apiConfigs.default.apiModelId).toEqual("roo/code-supernova-1-million")
+			const calls = mockSecrets.store.mock.calls
+			const storedConfig = JSON.parse(calls[calls.length - 1][1])
+			expect(storedConfig.apiConfigs["router-profile"]).toEqual({ id: "router-id" })
 		})
 
 		it("should throw error if secrets storage fails", async () => {
@@ -903,6 +900,52 @@ describe("ProviderSettingsManager", () => {
 			expect(exported.apiConfigs.retired.openAiBaseUrl).toBe("https://legacy.example/v1")
 			expect(exported.apiConfigs.retired.modelMaxTokens).toBe(4096)
 			expect(exported.apiConfigs.retired.modelMaxThinkingTokens).toBe(2048)
+		})
+
+		it("should preserve modelMaxTokens for models that support a configurable max output (e.g. GLM)", async () => {
+			const existingConfig: ProviderProfiles = {
+				currentApiConfigName: "glm",
+				apiConfigs: {
+					glm: {
+						id: "glm-id",
+						apiProvider: "zai",
+						apiModelId: "glm-5.1",
+						modelMaxTokens: 8192,
+						modelMaxThinkingTokens: 2048,
+					},
+				},
+			}
+
+			mockSecrets.get.mockResolvedValue(JSON.stringify(existingConfig))
+
+			const exported = await providerSettingsManager.export()
+
+			// GLM exposes a configurable max output (supportsMaxTokens) but no reasoning budget,
+			// so modelMaxTokens must survive the export while modelMaxThinkingTokens is dropped.
+			expect(exported.apiConfigs.glm.modelMaxTokens).toBe(8192)
+			expect(exported.apiConfigs.glm.modelMaxThinkingTokens).toBeUndefined()
+		})
+
+		it("should strip both token fields for models that support neither reasoning budgets nor a configurable max", async () => {
+			const existingConfig: ProviderProfiles = {
+				currentApiConfigName: "anthropic",
+				apiConfigs: {
+					anthropic: {
+						id: "anthropic-id",
+						apiProvider: "anthropic",
+						apiModelId: "claude-3-5-haiku-20241022",
+						modelMaxTokens: 8192,
+						modelMaxThinkingTokens: 2048,
+					},
+				},
+			}
+
+			mockSecrets.get.mockResolvedValue(JSON.stringify(existingConfig))
+
+			const exported = await providerSettingsManager.export()
+
+			expect(exported.apiConfigs.anthropic.modelMaxTokens).toBeUndefined()
+			expect(exported.apiConfigs.anthropic.modelMaxThinkingTokens).toBeUndefined()
 		})
 	})
 

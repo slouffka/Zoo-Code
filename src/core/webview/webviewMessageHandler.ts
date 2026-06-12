@@ -47,8 +47,10 @@ import { MessageEnhancer } from "./messageEnhancer"
 
 import { CodeIndexManager } from "../../services/code-index/manager"
 import { checkExistKey } from "../../shared/checkExistApiConfig"
+import { getRouterRemovalMessage, getRouterUnavailableSignInMessage } from "../config/routerRemoval"
 import { experimentDefault } from "../../shared/experiments"
 import { Terminal } from "../../integrations/terminal/Terminal"
+import { TerminalRegistry } from "../../integrations/terminal/TerminalRegistry"
 import { openFile } from "../../integrations/misc/open-file"
 import { openImage, saveImage } from "../../integrations/misc/image-handler"
 import { selectImages } from "../../integrations/misc/process-images"
@@ -71,6 +73,7 @@ import { GetModelsOptions } from "../../shared/api"
 import { generateSystemPrompt } from "./generateSystemPrompt"
 import { resolveDefaultSaveUri, saveLastExportPath } from "../../utils/export"
 import { getCommand } from "../../utils/commands"
+import { getLMStudioModels } from "../../api/providers/fetchers/lmstudio"
 
 const ALLOWED_VSCODE_SETTINGS = new Set(["terminal.integrated.inheritEnv"])
 
@@ -101,6 +104,12 @@ export const webviewMessageHandler = async (
 
 	const getCurrentCwd = () => {
 		return provider.getCurrentTask()?.cwd || provider.cwd
+	}
+
+	const isCloudServiceAvailable = () => CloudService.hasInstance()
+
+	const showCloudUnavailableMessage = () => {
+		vscode.window.showInformationMessage(getRouterUnavailableSignInMessage())
 	}
 
 	const getCurrentMode = async (): Promise<string> => {
@@ -718,6 +727,17 @@ export const webviewMessageHandler = async (
 						if (value !== undefined) {
 							Terminal.setTerminalZdotdir(value as boolean)
 						}
+					} else if (key === "terminalProfile") {
+						const previousProfile = Terminal.getTerminalProfile()
+						Terminal.setTerminalProfile(typeof value === "string" ? value : undefined)
+						newValue = Terminal.getTerminalProfile()
+
+						if (newValue !== previousProfile) {
+							// Discard idle terminals so the next command gets a fresh
+							// terminal using the new profile's shell instead of reusing
+							// a stale one from the previous profile.
+							TerminalRegistry.closeIdleTerminals()
+						}
 					} else if (key === "execaShellPath") {
 						Terminal.setExecaShellPath(value as string | undefined)
 					} else if (key === "mcpEnabled") {
@@ -783,48 +803,13 @@ export const webviewMessageHandler = async (
 			break
 		case "shareCurrentTask":
 			const shareTaskId = provider.getCurrentTask()?.taskId
-			const clineMessages = provider.getCurrentTask()?.clineMessages
 
 			if (!shareTaskId) {
 				vscode.window.showErrorMessage(t("common:errors.share_no_active_task"))
 				break
 			}
 
-			try {
-				const visibility = message.visibility || "organization"
-				const result = await CloudService.instance.shareTask(shareTaskId, visibility, clineMessages)
-
-				if (result.success && result.shareUrl) {
-					// Show success notification
-					const messageKey =
-						visibility === "public"
-							? "common:info.public_share_link_copied"
-							: "common:info.organization_share_link_copied"
-					vscode.window.showInformationMessage(t(messageKey))
-
-					// Send success feedback to webview for inline display
-					await provider.postMessageToWebview({
-						type: "shareTaskSuccess",
-						visibility,
-						text: result.shareUrl,
-					})
-				} else {
-					// Handle error
-					const errorMessage = result.error || "Failed to create share link"
-					if (errorMessage.includes("Authentication")) {
-						vscode.window.showErrorMessage(t("common:errors.share_auth_required"))
-					} else if (errorMessage.includes("sharing is not enabled")) {
-						vscode.window.showErrorMessage(t("common:errors.share_not_enabled"))
-					} else if (errorMessage.includes("not found")) {
-						vscode.window.showErrorMessage(t("common:errors.share_task_not_found"))
-					} else {
-						vscode.window.showErrorMessage(errorMessage)
-					}
-				}
-			} catch (error) {
-				provider.log(`[shareCurrentTask] Unexpected error: ${error}`)
-				vscode.window.showErrorMessage(t("common:errors.share_task_failed"))
-			}
+			vscode.window.showErrorMessage(t("common:errors.share_not_enabled"))
 			break
 		case "showTaskWithId":
 			provider.showTaskWithId(message.text!)
@@ -949,13 +934,15 @@ export const webviewMessageHandler = async (
 				: {
 						openrouter: {},
 						"vercel-ai-gateway": {},
+						"zoo-gateway": {},
 						litellm: {},
 						requesty: {},
 						unbound: {},
 						ollama: {},
 						lmstudio: {},
-						roo: {},
 						poe: {},
+						deepseek: {},
+						"opencode-go": {},
 					}
 
 			const safeGetModels = async (options: GetModelsOptions): Promise<ModelRecord> => {
@@ -991,13 +978,11 @@ export const webviewMessageHandler = async (
 				},
 				{ key: "vercel-ai-gateway", options: { provider: "vercel-ai-gateway" } },
 				{
-					key: "roo",
+					key: "zoo-gateway",
 					options: {
-						provider: "roo",
-						baseUrl: process.env.ROO_CODE_PROVIDER_URL ?? "https://api.roocode.com/proxy",
-						apiKey: CloudService.hasInstance()
-							? CloudService.instance.authService?.getSessionToken()
-							: undefined,
+						provider: "zoo-gateway",
+						apiKey: apiConfiguration.zooSessionToken,
+						baseUrl: apiConfiguration.zooGatewayBaseUrl,
 					},
 				},
 			]
@@ -1031,6 +1016,35 @@ export const webviewMessageHandler = async (
 				candidates.push({
 					key: "poe",
 					options: { provider: "poe", apiKey: poeApiKey, baseUrl: poeBaseUrl },
+				})
+			}
+
+			// DeepSeek is conditional on apiKey
+			const deepSeekApiKey = message?.values?.deepSeekApiKey ?? apiConfiguration.deepSeekApiKey
+			const deepSeekBaseUrl = message?.values?.deepSeekBaseUrl ?? apiConfiguration.deepSeekBaseUrl
+
+			if (deepSeekApiKey) {
+				if (message?.values?.deepSeekApiKey || message?.values?.deepSeekBaseUrl) {
+					await flushModels({ provider: "deepseek", apiKey: deepSeekApiKey, baseUrl: deepSeekBaseUrl }, true)
+				}
+
+				candidates.push({
+					key: "deepseek",
+					options: { provider: "deepseek", apiKey: deepSeekApiKey, baseUrl: deepSeekBaseUrl },
+				})
+			}
+
+			// Opencode Go is conditional on apiKey (its /models endpoint requires auth)
+			const opencodeGoApiKey = message?.values?.opencodeGoApiKey ?? apiConfiguration.opencodeGoApiKey
+
+			if (opencodeGoApiKey) {
+				if (message?.values?.opencodeGoApiKey) {
+					await flushModels({ provider: "opencode-go", apiKey: opencodeGoApiKey }, true)
+				}
+
+				candidates.push({
+					key: "opencode-go",
+					options: { provider: "opencode-go", apiKey: opencodeGoApiKey },
 				})
 			}
 
@@ -1108,14 +1122,20 @@ export const webviewMessageHandler = async (
 			// Specific handler for LM Studio models only.
 			const { apiConfiguration: lmStudioApiConfig } = await provider.getState()
 			try {
-				const lmStudioOptions = {
-					provider: "lmstudio" as const,
-					baseUrl: lmStudioApiConfig.lmStudioBaseUrl,
+				const requestedBaseUrl = message.values?.baseUrl
+				const hasPreviewBaseUrl = typeof requestedBaseUrl === "string"
+				let lmStudioModels: ModelRecord
+				if (hasPreviewBaseUrl) {
+					lmStudioModels = await getLMStudioModels(requestedBaseUrl)
+				} else {
+					const lmStudioOptions = {
+						provider: "lmstudio" as const,
+						baseUrl: lmStudioApiConfig.lmStudioBaseUrl,
+					}
+					// Flush cache and refresh to ensure fresh models.
+					await flushModels(lmStudioOptions, true)
+					lmStudioModels = await getModels(lmStudioOptions)
 				}
-				// Flush cache and refresh to ensure fresh models.
-				await flushModels(lmStudioOptions, true)
-
-				const lmStudioModels = await getModels(lmStudioOptions)
 
 				if (Object.keys(lmStudioModels).length > 0) {
 					provider.postMessageToWebview({
@@ -1130,61 +1150,12 @@ export const webviewMessageHandler = async (
 			break
 		}
 		case "requestRooModels": {
-			// Specific handler for Roo models only - flushes cache to ensure fresh auth token is used
-			try {
-				const rooOptions = {
-					provider: "roo" as const,
-					baseUrl: process.env.ROO_CODE_PROVIDER_URL ?? "https://api.roocode.com/proxy",
-					apiKey: CloudService.hasInstance()
-						? CloudService.instance.authService?.getSessionToken()
-						: undefined,
-				}
-				// Flush cache and refresh to ensure fresh models with current auth state
-				await flushModels(rooOptions, true)
-
-				const rooModels = await getModels(rooOptions)
-
-				// Always send a response, even if no models are returned
-				provider.postMessageToWebview({
-					type: "singleRouterModelFetchResponse",
-					success: true,
-					values: { provider: "roo", models: rooModels },
-				})
-			} catch (error) {
-				// Send error response
-				const errorMessage = error instanceof Error ? error.message : String(error)
-				provider.postMessageToWebview({
-					type: "singleRouterModelFetchResponse",
-					success: false,
-					error: errorMessage,
-					values: { provider: "roo" },
-				})
-			}
-			break
-		}
-		case "requestRooCreditBalance": {
-			// Fetch Roo credit balance using CloudAPI
-			const requestId = message.requestId
-			try {
-				if (!CloudService.hasInstance() || !CloudService.instance.cloudAPI) {
-					throw new Error("Cloud service not available")
-				}
-
-				const balance = await CloudService.instance.cloudAPI.creditBalance()
-
-				provider.postMessageToWebview({
-					type: "rooCreditBalance",
-					requestId,
-					values: { balance },
-				})
-			} catch (error) {
-				const errorMessage = error instanceof Error ? error.message : String(error)
-				provider.postMessageToWebview({
-					type: "rooCreditBalance",
-					requestId,
-					values: { error: errorMessage },
-				})
-			}
+			provider.postMessageToWebview({
+				type: "singleRouterModelFetchResponse",
+				success: false,
+				error: getRouterRemovalMessage(),
+				values: { provider: "roo" },
+			})
 			break
 		}
 		case "requestOpenAiModels":
@@ -1365,6 +1336,12 @@ export const webviewMessageHandler = async (
 
 			break
 		}
+		case "openTerminalProfilePicker": {
+			// Open VS Code's native terminal profile picker so the user can set the
+			// default shell without leaving VS Code's own settings UI.
+			await vscode.commands.executeCommand("workbench.action.terminal.selectDefaultShell")
+			break
+		}
 		case "openKeyboardShortcuts": {
 			// Open VSCode keyboard shortcuts settings and optionally filter to show the Roo Code commands
 			const searchQuery = message.text || ""
@@ -1491,15 +1468,7 @@ export const webviewMessageHandler = async (
 			break
 		}
 		case "taskSyncEnabled":
-			const enabled = message.bool ?? false
-			const updatedSettings: Partial<UserSettingsConfig> = { taskSyncEnabled: enabled }
-
-			try {
-				await CloudService.instance.updateUserSettings(updatedSettings)
-			} catch (error) {
-				provider.log(`Failed to update cloud settings for task sync: ${error}`)
-			}
-
+			provider.log("Ignoring taskSyncEnabled update because cloud task sync is disabled")
 			break
 
 		case "refreshAllMcpServers": {
@@ -1573,6 +1542,27 @@ export const webviewMessageHandler = async (
 			}
 
 			break
+
+		case "requestTerminalProfiles": {
+			// Allowlisted request: read VS Code's terminal profiles server-side and
+			// return only the sanitized profile names. The terminal profile dropdown
+			// only needs names, so this avoids routing it through the generic
+			// `getVSCodeSetting` handler (which reads any key the webview supplies).
+			// Only profiles with a resolvable `path` are returned — source-only
+			// profiles (e.g. { source: "PowerShell" }) cannot be mapped to a shell
+			// binary by an extension and would silently fall back to the default.
+			try {
+				await provider.postMessageToWebview({
+					type: "terminalProfiles",
+					profiles: Terminal.getAvailableProfileNames(),
+				})
+			} catch (error) {
+				console.error("Failed to get terminal profiles:", error)
+				await provider.postMessageToWebview({ type: "terminalProfiles", profiles: [] })
+			}
+
+			break
+		}
 
 		case "mode":
 			await provider.handleModeSwitch(message.text as Mode)
@@ -2345,12 +2335,13 @@ export const webviewMessageHandler = async (
 			await provider.postStateToWebview()
 			break
 		}
-		case "cloudButtonClicked": {
-			// Navigate to the cloud tab.
-			provider.postMessageToWebview({ type: "action", action: "cloudButtonClicked" })
-			break
-		}
 		case "rooCloudSignIn": {
+			if (!isCloudServiceAvailable()) {
+				provider.log("CloudService unavailable; ignoring rooCloudSignIn")
+				showCloudUnavailableMessage()
+				break
+			}
+
 			try {
 				TelemetryService.instance.captureEvent(TelemetryEventName.AUTHENTICATION_INITIATED)
 				// Use provider signup flow if useProviderSignup is explicitly true
@@ -2363,6 +2354,12 @@ export const webviewMessageHandler = async (
 			break
 		}
 		case "cloudLandingPageSignIn": {
+			if (!isCloudServiceAvailable()) {
+				provider.log("CloudService unavailable; ignoring cloudLandingPageSignIn")
+				showCloudUnavailableMessage()
+				break
+			}
+
 			try {
 				const landingPageSlug = message.text || "supernova"
 				TelemetryService.instance.captureEvent(TelemetryEventName.AUTHENTICATION_INITIATED)
@@ -2374,6 +2371,12 @@ export const webviewMessageHandler = async (
 			break
 		}
 		case "rooCloudSignOut": {
+			if (!isCloudServiceAvailable()) {
+				await provider.postStateToWebview()
+				provider.postMessageToWebview({ type: "authenticatedUser", userInfo: undefined })
+				break
+			}
+
 			try {
 				await CloudService.instance.logout()
 				await provider.postStateToWebview()
@@ -2425,6 +2428,12 @@ export const webviewMessageHandler = async (
 			break
 		}
 		case "rooCloudManualUrl": {
+			if (!isCloudServiceAvailable()) {
+				provider.log("CloudService unavailable; ignoring rooCloudManualUrl")
+				showCloudUnavailableMessage()
+				break
+			}
+
 			try {
 				if (!message.text) {
 					vscode.window.showErrorMessage(t("common:errors.manual_url_empty"))
@@ -2470,6 +2479,72 @@ export const webviewMessageHandler = async (
 			// Clear the flag that indicates auth completed without model selection
 			await provider.context.globalState.update("roo-auth-skip-model", undefined)
 			await provider.postStateToWebview()
+			break
+		}
+		case "zooCodeSignOut": {
+			try {
+				const { disconnectZooCode } = await import("../../services/zoo-code-auth")
+				await disconnectZooCode()
+
+				// Clear zooSessionToken from ALL provider profiles with apiProvider === "zoo-gateway".
+				// Profiles are user-renameable, so we cannot rely on a hardcoded name like "Zoo Gateway".
+				// We must scan all profiles and clear tokens from any that use the zoo-gateway provider.
+				try {
+					const allProfiles = await provider.providerSettingsManager.listConfig()
+					// Check if Zoo Gateway is the currently active profile by apiProvider identity
+					const currentSettings = provider.contextProxy.getProviderSettings()
+					const isZooGatewayActive = currentSettings.apiProvider === "zoo-gateway"
+					const currentApiConfigName = provider.contextProxy.getValues().currentApiConfigName
+
+					for (const entry of allProfiles) {
+						if (entry.apiProvider !== "zoo-gateway") {
+							continue
+						}
+
+						// Isolate per-profile failures: a corrupted profile or a failed write
+						// for one entry must not abort cleanup of the remaining profiles,
+						// otherwise sign-out would leave later profiles with a stale token.
+						try {
+							const profile = await provider.providerSettingsManager.getProfile({ name: entry.name })
+							const { zooSessionToken: _removed, ...cleanedProfile } = profile
+
+							// If this is the currently active profile, ALWAYS push to the in-memory
+							// handler — even when the persisted profile has already been cleared —
+							// because currentSettings (and therefore the live API handler) may still
+							// carry a stale token from before sign-out. Persisted-only profiles get
+							// rewritten only when they previously had a token to avoid no-op disk writes.
+							const isThisProfileActive = isZooGatewayActive && currentApiConfigName === entry.name
+
+							if (isThisProfileActive) {
+								await provider.upsertProviderProfile(entry.name, cleanedProfile, true)
+								provider.log(
+									`[zooCodeSignOut] Cleared zooSessionToken from "${entry.name}" profile and updated in-memory handler`,
+								)
+							} else if (profile.zooSessionToken) {
+								await provider.providerSettingsManager.saveConfig(entry.name, cleanedProfile)
+								provider.log(`[zooCodeSignOut] Cleared zooSessionToken from "${entry.name}" profile`)
+							}
+						} catch (profileError) {
+							// Log but continue to the next profile so one failure doesn't
+							// leave other profiles holding a stale token.
+							provider.log(
+								`[zooCodeSignOut] Failed to clear profile token for "${entry.name}": ${profileError instanceof Error ? profileError.message : String(profileError)}`,
+							)
+						}
+					}
+				} catch (profileError) {
+					// listConfig itself failed — nothing to iterate.
+					provider.log(
+						`[zooCodeSignOut] Failed to list profiles for token cleanup: ${profileError instanceof Error ? profileError.message : String(profileError)}`,
+					)
+				}
+
+				await provider.postStateToWebview()
+			} catch (error) {
+				provider.log(
+					`Failed to sign out of Zoo Code: ${error instanceof Error ? error.message : String(error)}`,
+				)
+			}
 			break
 		}
 		case "switchOrganization": {

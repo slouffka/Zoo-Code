@@ -1,9 +1,13 @@
 import * as path from "path"
 import * as childProcess from "child_process"
 import { listFiles } from "../list-files"
+import { directoryExists } from "../../../services/roo-config"
 
 vi.mock("child_process")
 vi.mock("fs")
+vi.mock("../../../services/roo-config", () => ({
+	directoryExists: vi.fn().mockResolvedValue(true),
+}))
 vi.mock("vscode", () => ({
 	env: {
 		appRoot: "/mock/vscode/app/root",
@@ -48,6 +52,7 @@ vi.mock("fs", () => ({
 		access: vi.fn().mockRejectedValue(new Error("Not found")),
 		readFile: vi.fn().mockResolvedValue(""),
 		readdir: vi.fn().mockResolvedValue([]),
+		stat: vi.fn().mockResolvedValue({ isDirectory: () => true }),
 	},
 }))
 
@@ -62,37 +67,52 @@ vi.mock("../../path", () => ({
 	arePathsEqual: vi.fn().mockReturnValue(false),
 }))
 
+const createMockRipgrepProcess = (chunks: string[] = [], exitCode = 0) => ({
+	stdout: {
+		on: vi.fn((event, callback) => {
+			if (event === "data") {
+				for (const chunk of chunks) {
+					callback(chunk)
+				}
+			}
+		}),
+	},
+	stderr: {
+		on: vi.fn(),
+	},
+	on: vi.fn((event, callback) => {
+		if (event === "close") {
+			callback(exitCode)
+		}
+		if (event === "error") {
+			// No error simulation
+		}
+	}),
+	kill: vi.fn(),
+})
+
+function resetFsPromiseMocks() {
+	vi.mocked(fs.promises.access).mockReset()
+	vi.mocked(fs.promises.access).mockRejectedValue(new Error("Not found"))
+	vi.mocked(fs.promises.readFile).mockReset()
+	vi.mocked(fs.promises.readFile).mockResolvedValue("")
+	vi.mocked(fs.promises.readdir).mockReset()
+	vi.mocked(fs.promises.readdir).mockResolvedValue([])
+	vi.mocked(fs.promises.stat).mockReset()
+	vi.mocked(fs.promises.stat).mockResolvedValue({ isDirectory: () => true } as any)
+	vi.mocked(directoryExists).mockReset()
+	vi.mocked(directoryExists).mockResolvedValue(true)
+}
+
 describe("list-files symlink support", () => {
 	beforeEach(() => {
 		vi.clearAllMocks()
+		resetFsPromiseMocks()
 	})
 
 	it("should include --follow flag in ripgrep arguments", async () => {
 		const mockSpawn = vi.mocked(childProcess.spawn)
-		const mockProcess = {
-			stdout: {
-				on: vi.fn((event, callback) => {
-					if (event === "data") {
-						// Simulate some output to complete the process
-						setTimeout(() => callback("test-file.txt\n"), 10)
-					}
-				}),
-			},
-			stderr: {
-				on: vi.fn(),
-			},
-			on: vi.fn((event, callback) => {
-				if (event === "close") {
-					setTimeout(() => callback(0), 20)
-				}
-				if (event === "error") {
-					// No error simulation
-				}
-			}),
-			kill: vi.fn(),
-		}
-
-		mockSpawn.mockReturnValue(mockProcess as any)
+		mockSpawn.mockReturnValue(createMockRipgrepProcess(["test-file.txt\n"]) as any)
 
 		// Use a test directory path
 		const testDir = "/test/dir"
@@ -101,45 +121,20 @@ describe("list-files symlink support", () => {
 		await listFiles(testDir, false, 100)
 
 		// Verify that spawn was called with --follow flag (the critical fix)
-		const [rgPath, args] = mockSpawn.mock.calls[0]
+		const [rgPath, args, options] = mockSpawn.mock.calls[0]
 		expect(rgPath).toBe("/mock/path/to/rg")
 		expect(args).toContain("--files")
 		expect(args).toContain("--hidden")
 		expect(args).toContain("--follow") // This is the critical assertion - the fix should add this flag
 
-		// Platform-agnostic path check - verify the last argument ends with the expected path
 		const lastArg = args[args.length - 1]
-		// On Windows, the path might be resolved to something like D:\test\dir
-		// On Unix, it would be /test/dir
-		// So we just check that it ends with the expected segments
-		expect(lastArg).toMatch(/[/\\]test[/\\]dir$/)
+		expect(lastArg).toBe(".")
+		expect(options).toMatchObject({ cwd: path.resolve(testDir) })
 	})
 
 	it("should include --follow flag for recursive listings too", async () => {
 		const mockSpawn = vi.mocked(childProcess.spawn)
-		const mockProcess = {
-			stdout: {
-				on: vi.fn((event, callback) => {
-					if (event === "data") {
-						setTimeout(() => callback("test-file.txt\n"), 10)
-					}
-				}),
-			},
-			stderr: {
-				on: vi.fn(),
-			},
-			on: vi.fn((event, callback) => {
-				if (event === "close") {
-					setTimeout(() => callback(0), 20)
-				}
-				if (event === "error") {
-					// No error simulation
-				}
-			}),
-			kill: vi.fn(),
-		}
-
-		mockSpawn.mockReturnValue(mockProcess as any)
+		mockSpawn.mockReturnValue(createMockRipgrepProcess(["test-file.txt\n"]) as any)
 
 		// Use a test directory path
 		const testDir = "/test/dir"
@@ -148,18 +143,30 @@ describe("list-files symlink support", () => {
 		await listFiles(testDir, true, 100)
 
 		// Verify that spawn was called with --follow flag (the critical fix)
-		const [rgPath, args] = mockSpawn.mock.calls[0]
+		const [rgPath, args, options] = mockSpawn.mock.calls[0]
 		expect(rgPath).toBe("/mock/path/to/rg")
 		expect(args).toContain("--files")
 		expect(args).toContain("--hidden")
 		expect(args).toContain("--follow") // This should be present in recursive mode too
 
-		// Platform-agnostic path check - verify the last argument ends with the expected path
 		const lastArg = args[args.length - 1]
-		// On Windows, the path might be resolved to something like D:\test\dir
-		// On Unix, it would be /test/dir
-		// So we just check that it ends with the expected segments
-		expect(lastArg).toMatch(/[/\\]test[/\\]dir$/)
+		expect(lastArg).toBe(".")
+		expect(options).toMatchObject({ cwd: path.resolve(testDir) })
+	})
+
+	it("should keep ignored ancestor directories like /tmp from excluding recursive file results", async () => {
+		const mockSpawn = vi.mocked(childProcess.spawn)
+		mockSpawn.mockReturnValue(createMockRipgrepProcess(["nested/deep/deep-nested-file.ts\n"]) as any)
+
+		const testDir = "/tmp/roo-test-workspace/list-files-tool-fixture"
+
+		const [files] = await listFiles(testDir, true, 100)
+
+		const [, args, options] = mockSpawn.mock.calls[0]
+		expect(args).toContain("!**/tmp/**")
+		expect(args[args.length - 1]).toBe(".")
+		expect(options).toMatchObject({ cwd: path.resolve(testDir) })
+		expect(files).toContain(path.resolve(testDir, "nested", "deep", "deep-nested-file.ts"))
 	})
 
 	it("should ensure first-level directories are included when limit is reached", async () => {
@@ -177,41 +184,21 @@ describe("list-files symlink support", () => {
 
 		// Mock ripgrep to return many files (simulating hitting the limit)
 		const mockSpawn = vi.mocked(childProcess.spawn)
-		const mockProcess = {
-			stdout: {
-				on: vi.fn((event, callback) => {
-					if (event === "data") {
-						// Return many file paths to trigger the limit
-						// Note: ripgrep returns relative paths
-						const paths =
-							[
-								"a_dir/",
-								"a_dir/subdir1/",
-								"a_dir/subdir1/file1.txt",
-								"a_dir/subdir1/file2.txt",
-								"a_dir/subdir2/",
-								"a_dir/subdir2/file3.txt",
-								"a_dir/file4.txt",
-								"a_dir/file5.txt",
-								"file1.txt",
-								"file2.txt",
-								// Note: b_dir and c_dir are missing from ripgrep output
-							].join("\n") + "\n"
-						setTimeout(() => callback(paths), 10)
-					}
-				}),
-			},
-			stderr: {
-				on: vi.fn(),
-			},
-			on: vi.fn((event, callback) => {
-				if (event === "close") {
-					setTimeout(() => callback(0), 20)
-				}
-			}),
-			kill: vi.fn(),
-		}
-		mockSpawn.mockReturnValue(mockProcess as any)
+		const paths =
+			[
+				"a_dir/",
+				"a_dir/subdir1/",
+				"a_dir/subdir1/file1.txt",
+				"a_dir/subdir1/file2.txt",
+				"a_dir/subdir2/",
+				"a_dir/subdir2/file3.txt",
+				"a_dir/file4.txt",
+				"a_dir/file5.txt",
+				"file1.txt",
+				"file2.txt",
+				// Note: b_dir and c_dir are missing from ripgrep output
+			].join("\n") + "\n"
+		mockSpawn.mockReturnValue(createMockRipgrepProcess([paths]) as any)
 
 		// Mock fs.promises.access to simulate .gitignore doesn't exist
 		vi.mocked(fs.promises.access).mockRejectedValue(new Error("File not found"))
@@ -244,12 +231,12 @@ describe("list-files symlink support", () => {
 describe("hidden directory exclusion", () => {
 	beforeEach(() => {
 		vi.clearAllMocks()
+		resetFsPromiseMocks()
 	})
 
 	it("should exclude .git subdirectories from recursive directory listing", async () => {
 		// Mock filesystem structure with .git subdirectories
-		const mockReaddir = vi.fn()
-		vi.mocked(fs.promises).readdir = mockReaddir
+		const mockReaddir = vi.mocked(fs.promises.readdir)
 
 		// Mock the directory structure:
 		// /test/
@@ -262,34 +249,16 @@ describe("hidden directory exclusion", () => {
 			.mockResolvedValueOnce([
 				{ name: ".git", isDirectory: () => true, isSymbolicLink: () => false },
 				{ name: "src", isDirectory: () => true, isSymbolicLink: () => false },
-			])
+			] as any)
 			.mockResolvedValueOnce([
 				// src subdirectories (should be included)
 				{ name: "components", isDirectory: () => true, isSymbolicLink: () => false },
-			])
-			.mockResolvedValueOnce([]) // components/ is empty
+			] as any)
+			.mockResolvedValueOnce([] as any) // components/ is empty
 
 		// Mock ripgrep to return no files
 		const mockSpawn = vi.mocked(childProcess.spawn)
-		const mockProcess = {
-			stdout: {
-				on: vi.fn((event, callback) => {
-					if (event === "data") {
-						// No files returned
-					}
-				}),
-			},
-			stderr: {
-				on: vi.fn(),
-			},
-			on: vi.fn((event, callback) => {
-				if (event === "close") {
-					setTimeout(() => callback(0), 10)
-				}
-			}),
-			kill: vi.fn(),
-		}
-		mockSpawn.mockReturnValue(mockProcess as any)
+		mockSpawn.mockReturnValue(createMockRipgrepProcess() as any)
 
 		// Call listFiles with recursive=true
 		const [result] = await listFiles("/test", true, 100)
@@ -315,36 +284,17 @@ describe("hidden directory exclusion", () => {
 
 	it("should allow explicit targeting of hidden directories", async () => {
 		// Mock filesystem structure for explicit .roo-memory targeting
-		const mockReaddir = vi.fn()
-		vi.mocked(fs.promises).readdir = mockReaddir
+		const mockReaddir = vi.mocked(fs.promises.readdir)
 
 		// Mock .roo-memory directory contents
 		mockReaddir.mockResolvedValueOnce([
 			{ name: "tasks", isDirectory: () => true, isSymbolicLink: () => false },
 			{ name: "context", isDirectory: () => true, isSymbolicLink: () => false },
-		])
+		] as any)
 
 		// Mock ripgrep to return no files
 		const mockSpawn = vi.mocked(childProcess.spawn)
-		const mockProcess = {
-			stdout: {
-				on: vi.fn((event, callback) => {
-					if (event === "data") {
-						// No files returned
-					}
-				}),
-			},
-			stderr: {
-				on: vi.fn(),
-			},
-			on: vi.fn((event, callback) => {
-				if (event === "close") {
-					setTimeout(() => callback(0), 10)
-				}
-			}),
-			kill: vi.fn(),
-		}
-		mockSpawn.mockReturnValue(mockProcess as any)
+		mockSpawn.mockReturnValue(createMockRipgrepProcess() as any)
 
 		// Call listFiles explicitly targeting .roo-memory directory
 		const [result] = await listFiles("/test/.roo-memory", true, 100)
@@ -365,36 +315,11 @@ describe("hidden directory exclusion", () => {
 		// This test specifically addresses the bug where files at the root level of .roo/temp
 		// were being excluded when using recursive listing
 		const mockSpawn = vi.mocked(childProcess.spawn)
-		const mockProcess = {
-			stdout: {
-				on: vi.fn((event, callback) => {
-					if (event === "data") {
-						// Simulate files that should be found in .roo/temp
-						// Note: ripgrep returns relative paths
-						setTimeout(() => {
-							callback("teste1.md\n")
-							callback("22/test2.md\n")
-						}, 10)
-					}
-				}),
-			},
-			stderr: {
-				on: vi.fn(),
-			},
-			on: vi.fn((event, callback) => {
-				if (event === "close") {
-					setTimeout(() => callback(0), 20)
-				}
-			}),
-			kill: vi.fn(),
-		}
-
-		mockSpawn.mockReturnValue(mockProcess as any)
+		mockSpawn.mockReturnValue(createMockRipgrepProcess(["teste1.md\n", "22/test2.md\n"]) as any)
 
 		// Mock directory listing for .roo/temp
-		const mockReaddir = vi.fn()
-		vi.mocked(fs.promises).readdir = mockReaddir
-		mockReaddir.mockResolvedValueOnce([{ name: "22", isDirectory: () => true, isSymbolicLink: () => false }])
+		const mockReaddir = vi.mocked(fs.promises.readdir)
+		mockReaddir.mockResolvedValueOnce([{ name: "22", isDirectory: () => true, isSymbolicLink: () => false }] as any)
 
 		// Call listFiles targeting .roo/temp (which is both hidden and in DIRS_TO_IGNORE)
 		const [files] = await listFiles("/test/.roo/temp", true, 100)
@@ -423,29 +348,12 @@ describe("hidden directory exclusion", () => {
 describe("buildRecursiveArgs edge cases", () => {
 	beforeEach(() => {
 		vi.clearAllMocks()
+		resetFsPromiseMocks()
 	})
 
 	it("should correctly detect hidden directories with trailing slashes", async () => {
 		const mockSpawn = vi.mocked(childProcess.spawn)
-		const mockProcess = {
-			stdout: {
-				on: vi.fn((event, callback) => {
-					if (event === "data") {
-						setTimeout(() => callback("file.txt\n"), 10)
-					}
-				}),
-			},
-			stderr: {
-				on: vi.fn(),
-			},
-			on: vi.fn((event, callback) => {
-				if (event === "close") {
-					setTimeout(() => callback(0), 20)
-				}
-			}),
-			kill: vi.fn(),
-		}
-		mockSpawn.mockReturnValue(mockProcess as any)
+		mockSpawn.mockReturnValue(createMockRipgrepProcess(["file.txt\n"]) as any)
 
 		// Test with trailing slash on hidden directory
 		await listFiles("/test/.hidden/", true, 100)
@@ -461,25 +369,7 @@ describe("buildRecursiveArgs edge cases", () => {
 
 	it("should correctly detect hidden directories with redundant separators", async () => {
 		const mockSpawn = vi.mocked(childProcess.spawn)
-		const mockProcess = {
-			stdout: {
-				on: vi.fn((event, callback) => {
-					if (event === "data") {
-						setTimeout(() => callback("file.txt\n"), 10)
-					}
-				}),
-			},
-			stderr: {
-				on: vi.fn(),
-			},
-			on: vi.fn((event, callback) => {
-				if (event === "close") {
-					setTimeout(() => callback(0), 20)
-				}
-			}),
-			kill: vi.fn(),
-		}
-		mockSpawn.mockReturnValue(mockProcess as any)
+		mockSpawn.mockReturnValue(createMockRipgrepProcess(["file.txt\n"]) as any)
 
 		// Test with redundant separators before hidden directory
 		await listFiles("/test//.hidden", true, 100)
@@ -495,25 +385,7 @@ describe("buildRecursiveArgs edge cases", () => {
 
 	it("should correctly detect nested hidden directories with mixed separators", async () => {
 		const mockSpawn = vi.mocked(childProcess.spawn)
-		const mockProcess = {
-			stdout: {
-				on: vi.fn((event, callback) => {
-					if (event === "data") {
-						setTimeout(() => callback("file.txt\n"), 10)
-					}
-				}),
-			},
-			stderr: {
-				on: vi.fn(),
-			},
-			on: vi.fn((event, callback) => {
-				if (event === "close") {
-					setTimeout(() => callback(0), 20)
-				}
-			}),
-			kill: vi.fn(),
-		}
-		mockSpawn.mockReturnValue(mockProcess as any)
+		mockSpawn.mockReturnValue(createMockRipgrepProcess(["file.txt\n"]) as any)
 
 		// Test with complex path including hidden directory
 		await listFiles("/test//normal/.hidden//subdir/", true, 100)
@@ -529,25 +401,7 @@ describe("buildRecursiveArgs edge cases", () => {
 
 	it("should not detect hidden directories when path only has dots in filenames", async () => {
 		const mockSpawn = vi.mocked(childProcess.spawn)
-		const mockProcess = {
-			stdout: {
-				on: vi.fn((event, callback) => {
-					if (event === "data") {
-						setTimeout(() => callback("file.txt\n"), 10)
-					}
-				}),
-			},
-			stderr: {
-				on: vi.fn(),
-			},
-			on: vi.fn((event, callback) => {
-				if (event === "close") {
-					setTimeout(() => callback(0), 20)
-				}
-			}),
-			kill: vi.fn(),
-		}
-		mockSpawn.mockReturnValue(mockProcess as any)
+		mockSpawn.mockReturnValue(createMockRipgrepProcess(["file.txt\n"]) as any)
 
 		// Test with a path that has dots but no hidden directories
 		await listFiles("/test/file.with.dots/normal", true, 100)
@@ -556,5 +410,33 @@ describe("buildRecursiveArgs edge cases", () => {
 		// Should NOT have the special flags for hidden directories
 		expect(args).not.toContain("--no-ignore-vcs")
 		expect(args).not.toContain("--no-ignore")
+	})
+})
+
+describe("listFiles nonexistent directory", () => {
+	beforeEach(() => {
+		vi.clearAllMocks()
+		resetFsPromiseMocks()
+	})
+
+	it("should throw a clear error instead of a misleading ENOENT naming the executable", async () => {
+		vi.mocked(directoryExists).mockResolvedValue(false)
+
+		await expect(listFiles("/nonexistent/path", true, 100)).rejects.toThrow(
+			"Cannot list files: directory does not exist:",
+		)
+
+		// spawn should never be called when the directory doesn't exist
+		expect(vi.mocked(childProcess.spawn)).not.toHaveBeenCalled()
+	})
+
+	it("should report the missing directory even when ripgrep binary is also unavailable", async () => {
+		vi.mocked(directoryExists).mockResolvedValue(false)
+		const { getBinPath } = await import("../../ripgrep")
+		vi.mocked(getBinPath).mockRejectedValue(new Error("Could not find ripgrep binary"))
+
+		await expect(listFiles("/nonexistent/path", true, 100)).rejects.toThrow(
+			"Cannot list files: directory does not exist:",
+		)
 	})
 })

@@ -220,6 +220,7 @@ export class VertexHandler extends GeminiHandler implements SingleCompletionHand
 
 				const decodedChunk = decoder.decode(value, { stream: true })
 				buffer += decodedChunk
+				buffer = this.cleanExpressBuffer(buffer)
 
 				while (cursor < buffer.length) {
 					const char = buffer[cursor]
@@ -241,112 +242,158 @@ export class VertexHandler extends GeminiHandler implements SingleCompletionHand
 									// Log raw chunk for debugging
 									console.log(`Vertex Express Chunk: ${JSON.stringify(chunk)}`)
 
-									if (chunk.responseId) this.lastResponseId = chunk.responseId
+									if (chunk && typeof chunk === "object") {
+										if (chunk.responseId && typeof chunk.responseId === "string") {
+											this.lastResponseId = chunk.responseId
+										}
 
-									const candidate = chunk.candidates?.[0]
-									if (candidate) {
-										if (candidate.groundingMetadata)
-											pendingGroundingMetadata = candidate.groundingMetadata
+										const candidate = chunk.candidates?.[0]
+										if (candidate && typeof candidate === "object") {
+											if (candidate.groundingMetadata) {
+												pendingGroundingMetadata = candidate.groundingMetadata
+											}
 
-										if (candidate.finishReason && candidate.finishReason !== "STOP") {
-											const reason = candidate.finishReason
-											if (["SAFETY", "RECITATION", "OTHER"].includes(reason)) {
-												throw new Error(`Vertex Express Finish Reason: ${reason}`)
+											if (
+												candidate.finishReason &&
+												typeof candidate.finishReason === "string" &&
+												candidate.finishReason !== "STOP"
+											) {
+												const reason = candidate.finishReason
+												if (["SAFETY", "RECITATION", "OTHER"].includes(reason)) {
+													throw new Error(`Vertex Express Finish Reason: ${reason}`)
+												}
+											}
+
+											if (
+												candidate.content &&
+												typeof candidate.content === "object" &&
+												candidate.content.parts &&
+												Array.isArray(candidate.content.parts)
+											) {
+												for (const part of candidate.content.parts) {
+													if (!part || typeof part !== "object") continue
+
+													if (
+														(part.thoughtSignature || part.thought_signature) &&
+														thinkingConfig
+													) {
+														const sig = part.thoughtSignature || part.thought_signature
+														if (typeof sig === "string") {
+															this.lastThoughtSignature = sig
+														}
+													}
+
+													// Function calls should never be treated as reasoning, even if they carry a thoughtSignature
+													if (
+														part.functionCall &&
+														typeof part.functionCall === "object" &&
+														typeof part.functionCall.name === "string"
+													) {
+														hasYieldedAssistantContent = true
+														const callId = `${part.functionCall.name}-${toolCallCounter}`
+														yield {
+															type: "tool_call_partial",
+															index: toolCallCounter,
+															id: callId,
+															name: part.functionCall.name,
+															arguments: undefined,
+														}
+														yield {
+															type: "tool_call_partial",
+															index: toolCallCounter,
+															id: callId,
+															name: undefined,
+															arguments:
+																part.functionCall.args &&
+																typeof part.functionCall.args === "object"
+																	? JSON.stringify(part.functionCall.args)
+																	: undefined,
+														}
+														toolCallCounter++
+														continue
+													}
+
+													// Treat reasoning blocks as content
+													// Note: 'thought' flag and 'thoughtSignature' can come in the same part or separate ones.
+													if (part.thought === true || part.role === "thought") {
+														if (part.text && typeof part.text === "string") {
+															hasYieldedAssistantContent = true
+															yield { type: "reasoning", text: part.text }
+														} else {
+															// Structural reasoning parts mark as having content
+															hasYieldedAssistantContent = true
+															// Yield an empty reasoning block to ensure the UI sees activity
+															yield { type: "reasoning", text: "" }
+														}
+														continue
+													}
+
+													if (part.text && typeof part.text === "string") {
+														hasYieldedAssistantContent = true
+														const parts = part.text.split(
+															/(<think(?:\s.*?)?>|<\/think(?:\s.*?)?>)/gi,
+														)
+														for (const p of parts) {
+															const lowerP = p.toLowerCase()
+															if (lowerP.startsWith("<think")) inThought = true
+															else if (lowerP.startsWith("</think")) inThought = false
+															else if (p.length > 0)
+																yield {
+																	type: inThought ? "reasoning" : "text",
+																	text: p,
+																}
+														}
+													} else if (
+														part.functionCall &&
+														typeof part.functionCall === "object" &&
+														typeof part.functionCall.name === "string"
+													) {
+														hasYieldedAssistantContent = true
+														const callId = `${part.functionCall.name}-${toolCallCounter}`
+														yield {
+															type: "tool_call_partial",
+															index: toolCallCounter,
+															id: callId,
+															name: part.functionCall.name,
+															arguments: undefined,
+														}
+														yield {
+															type: "tool_call_partial",
+															index: toolCallCounter,
+															id: callId,
+															name: undefined,
+															arguments:
+																part.functionCall.args &&
+																typeof part.functionCall.args === "object"
+																	? JSON.stringify(part.functionCall.args)
+																	: undefined,
+														}
+														toolCallCounter++
+													}
+												}
 											}
 										}
 
-										if (candidate.content?.parts) {
-											for (const part of candidate.content.parts) {
-												if (
-													(part.thoughtSignature || part.thought_signature) &&
-													thinkingConfig
-												) {
-													this.lastThoughtSignature =
-														part.thoughtSignature || part.thought_signature
-												}
-
-												// Function calls should never be treated as reasoning, even if they carry a thoughtSignature
-												if (part.functionCall) {
-													hasYieldedAssistantContent = true
-													const callId = `${part.functionCall.name}-${toolCallCounter}`
-													yield {
-														type: "tool_call_partial",
-														index: toolCallCounter,
-														id: callId,
-														name: part.functionCall.name,
-														arguments: undefined,
-													}
-													yield {
-														type: "tool_call_partial",
-														index: toolCallCounter,
-														id: callId,
-														name: undefined,
-														arguments: JSON.stringify(part.functionCall.args),
-													}
-													toolCallCounter++
-													continue
-												}
-
-												// Treat reasoning blocks as content
-												// Note: 'thought' flag and 'thoughtSignature' can come in the same part or separate ones.
-												if (part.thought === true || part.role === "thought") {
-													if (part.text) {
-														hasYieldedAssistantContent = true
-														yield { type: "reasoning", text: part.text }
-													} else {
-														// Structural reasoning parts mark as having content
-														hasYieldedAssistantContent = true
-														// Yield an empty reasoning block to ensure the UI sees activity
-														yield { type: "reasoning", text: "" }
-													}
-													continue
-												}
-
-												if (part.text) {
-													hasYieldedAssistantContent = true
-													const parts = part.text.split(
-														/(<think(?:\s.*?)?>|<\/think(?:\s.*?)?>)/gi,
-													)
-													for (const p of parts) {
-														const lowerP = p.toLowerCase()
-														if (lowerP.startsWith("<think")) inThought = true
-														else if (lowerP.startsWith("</think")) inThought = false
-														else if (p.length > 0)
-															yield { type: inThought ? "reasoning" : "text", text: p }
-													}
-												} else if (part.functionCall) {
-													hasYieldedAssistantContent = true
-													const callId = `${part.functionCall.name}-${toolCallCounter}`
-													yield {
-														type: "tool_call_partial",
-														index: toolCallCounter,
-														id: callId,
-														name: part.functionCall.name,
-														arguments: undefined,
-													}
-													yield {
-														type: "tool_call_partial",
-														index: toolCallCounter,
-														id: callId,
-														name: undefined,
-														arguments: JSON.stringify(part.functionCall.args),
-													}
-													toolCallCounter++
-												}
+										const usage = chunk.usageMetadata || chunk.usage_metadata
+										if (usage && typeof usage === "object") {
+											const inputTokens =
+												typeof usage.promptTokenCount === "number"
+													? usage.promptTokenCount
+													: typeof usage.prompt_token_count === "number"
+														? usage.prompt_token_count
+														: 0
+											const outputTokens =
+												typeof usage.candidatesTokenCount === "number"
+													? usage.candidatesTokenCount
+													: typeof usage.candidates_token_count === "number"
+														? usage.candidates_token_count
+														: 0
+											yield {
+												type: "usage",
+												inputTokens,
+												outputTokens,
+												totalCost: this.calculateCost({ info, inputTokens, outputTokens }),
 											}
-										}
-									}
-
-									const usage = chunk.usageMetadata || chunk.usage_metadata
-									if (usage) {
-										const inputTokens = usage.promptTokenCount ?? usage.prompt_token_count ?? 0
-										const outputTokens =
-											usage.candidatesTokenCount ?? usage.candidates_token_count ?? 0
-										yield {
-											type: "usage",
-											inputTokens,
-											outputTokens,
-											totalCost: this.calculateCost({ info, inputTokens, outputTokens }),
 										}
 									}
 								} catch (e) {
@@ -417,6 +464,56 @@ export class VertexHandler extends GeminiHandler implements SingleCompletionHand
 
 	public override getThoughtSignature(): string | undefined {
 		return this.lastThoughtSignature
+	}
+
+	private cleanExpressBuffer(rawBuffer: string): string {
+		const lines = rawBuffer.split(/\r?\n/)
+		const cleanedLines = lines.map((line) => {
+			const trimmed = line.trim()
+			if (!trimmed) return line
+
+			// Check if it's SSE line
+			let contentToTest = trimmed
+			let prefix = ""
+			if (trimmed.startsWith("data:")) {
+				prefix = "data:"
+				contentToTest = trimmed.slice(5).trim()
+			}
+
+			// If it looks like JSON structure or has a JSON key-value pattern, keep it
+			if (
+				contentToTest.startsWith("{") ||
+				contentToTest.startsWith("[") ||
+				contentToTest.startsWith("}") ||
+				contentToTest.startsWith("]") ||
+				contentToTest.startsWith(",") ||
+				/"\w+"\s*:/i.test(contentToTest)
+			) {
+				return line
+			}
+
+			// Check for dynamic status indicators (case-insensitive)
+			const hasStatusKeyword = /exploring|searching|looking|browsing|grounding|thinking|connections/i.test(
+				contentToTest,
+			)
+
+			if (hasStatusKeyword) {
+				console.log(`Vertex Express: Ignored dynamic search status line: "${trimmed}"`)
+				return ""
+			}
+
+			return line
+		})
+
+		// Rejoin, filtering out lines that we marked as empty but were not originally empty
+		return cleanedLines
+			.filter((l, idx) => {
+				if (l === "") {
+					return lines[idx].trim() === ""
+				}
+				return true
+			})
+			.join("\n")
 	}
 
 	private cleanSchema(schema: any): any {

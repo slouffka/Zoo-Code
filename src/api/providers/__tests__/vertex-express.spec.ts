@@ -824,4 +824,71 @@ describe("VertexHandler Express Mode", () => {
 		expect(groundingMsg).toBeDefined()
 		expect(groundingMsg?.sources).toEqual([{ title: "Example", url: "https://example.com" }])
 	})
+
+	it("should safely ignore dynamic search status lines in stream (e.g. Exploring New Connections)", async () => {
+		const chunks = [
+			"Exploring New Connections\n",
+			'data: Searching web for "how to fix vertex express"\n',
+			'{"candidates": [{"content": {"parts": [{"text": "Hello"}]}}]}\n',
+			"data: Found links\n",
+			'{"candidates": [{"content": {"parts": [{"text": " world"}]}}]}\n',
+		]
+
+		const encoder = new TextEncoder()
+		const stream = new ReadableStream({
+			start(controller) {
+				chunks.forEach((chunk) => controller.enqueue(encoder.encode(chunk)))
+				controller.close()
+			},
+		})
+
+		fetchMock.mockResolvedValue({
+			ok: true,
+			body: stream,
+			text: () => Promise.resolve(""),
+		})
+
+		const messages = []
+		for await (const msg of handler.createMessage("sys", [])) {
+			messages.push(msg)
+		}
+
+		expect(messages).toEqual([
+			{ type: "text", text: "Hello" },
+			{ type: "text", text: " world" },
+		])
+	})
+
+	it("should safely handle unexpected structures or malformed chunks from Google API", async () => {
+		const chunks = [
+			"null", // null chunk
+			"123", // number chunk
+			'{"candidates": [null]}', // null candidate
+			'{"candidates": [{"content": {"parts": [null]}}]}', // null part
+			'{"candidates": [{"content": {"parts": [{"text": 123}]}}]}', // text is a number
+			'{"candidates": [{"content": {"parts": [{"text": "Valid response"}]}}]}',
+		]
+
+		const encoder = new TextEncoder()
+		const stream = new ReadableStream({
+			start(controller) {
+				chunks.forEach((chunk) => controller.enqueue(encoder.encode(chunk + "\n")))
+				controller.close()
+			},
+		})
+
+		fetchMock.mockResolvedValue({
+			ok: true,
+			body: stream,
+			text: () => Promise.resolve(""),
+		})
+
+		const messages = []
+		for await (const msg of handler.createMessage("sys", [])) {
+			messages.push(msg)
+		}
+
+		// It should skip all invalid structures and only produce the valid text block
+		expect(messages).toEqual([{ type: "text", text: "Valid response" }])
+	})
 })
